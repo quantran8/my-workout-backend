@@ -78,9 +78,14 @@ model Exercise {
   equipment         Json
   difficulty        Int
   isCompound        Boolean?
-  cues              Json? // instructions — KHÔNG gửi LLM, chỉ hiển thị
-  media             Json? // {startImg,endImg,videoUrl}
+  instructions      Json? // step-by-step — KHÔNG gửi LLM, chỉ hiển thị (đổi tên từ `cues`)
+  // media JSON đã chuẩn hóa: {startImg,endImg,videoUrl,instructorKey,productionStyleKey,
+  // ownership,reviewStatus} — xem MediaBlock trong exercise.types.ts
+  media             Json?
   source            Json?
+  // trình bày/áp dụng
+  contentMode       ContentMode  @default(demonstration)
+  environments      Json         @default("[]") // ["gym","home","outdoor"]
   // heuristic (cần duyệt)
   movementPattern   String?
   goalFit           Json?
@@ -104,6 +109,12 @@ enum ExerciseType {
   resistance
   cardio
   mobility
+}
+
+// demonstration = có media minh hoạ động tác; instruction_only = chỉ mô tả bằng chữ.
+enum ContentMode {
+  demonstration
+  instruction_only
 }
 
 // ============================================================
@@ -158,20 +169,48 @@ model PlannedSession {
 }
 
 model Prescription {
-  prescriptionId    String                 @id @default(uuid())
-  plannedSessionId  String
-  plannedSession    PlannedSession         @relation(fields: [plannedSessionId], references: [plannedSessionId], onDelete: Cascade)
-  exerciseId        String // -> Exercise (ràng buộc mềm ở app)
-  order             Int
-  targetSets        Int
-  targetReps        Json? // int | [min,max]
-  targetWeightKg    Float?
-  targetDurationSec Int?
-  targetDistanceM   Int?
-  targetRpe         Int?
-  restSec           Int
-  loggedSets        LoggedSet[]
-  executionItems    SessionExecutionItem[]
+  prescriptionId     String                 @id @default(uuid())
+  plannedSessionId   String
+  plannedSession     PlannedSession         @relation(fields: [plannedSessionId], references: [plannedSessionId], onDelete: Cascade)
+  exerciseId         String // -> Exercise (ràng buộc mềm ở app)
+  order              Int
+  targetSets         Int
+  targetReps         Json? // int | [min,max]
+  targetWeightKg     Float?
+  targetDurationSec  Int?
+  targetDistanceM    Int?
+  targetRpe          Int?
+  targetPaceSecPerKm Float? // cardio — đối chiếu với LoggedSet.actualPaceSecPerKm
+  restSec            Int
+  // blocks rỗng = bài đơn giản, đọc target* ở trên. Có blocks = interval/circuit.
+  blocks             PrescriptionBlock[]
+  loggedSets         LoggedSet[]
+  executionItems     SessionExecutionItem[]
+}
+
+// Một chặng trong bài có cấu trúc (interval/circuit): warmup -> work -> recovery -> cooldown.
+model PrescriptionBlock {
+  blockId            String            @id @default(uuid())
+  prescriptionId     String
+  prescription       Prescription      @relation(fields: [prescriptionId], references: [prescriptionId], onDelete: Cascade)
+  order              Int
+  phase              WorkoutBlockPhase
+  durationSec        Int?
+  distanceM          Int?
+  targetRpeMin       Int?
+  targetRpeMax       Int?
+  targetPaceSecPerKm Float?
+  instruction        String
+
+  @@unique([prescriptionId, order])
+  @@index([prescriptionId])
+}
+
+enum WorkoutBlockPhase {
+  warmup
+  work
+  recovery
+  cooldown
 }
 
 // ============================================================

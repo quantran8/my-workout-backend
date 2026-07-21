@@ -1,10 +1,14 @@
 /**
  * seed-exercises.ts — import movement_library_curated.json into the Exercise table.
  *
- * Two transforms matter:
+ * Four transforms matter:
  *  1. snake_case (JSON) -> camelCase (Prisma Exercise model) for top-level keys.
  *  2. SAFETY-CRITICAL: contraindications[].injury_area -> injuryArea. guardrail.ts reads
  *     `ci.injuryArea`; without this rename the injury filter silently blocks nothing.
+ *  3. cues (JSON) -> instructions (model). The source blob is step-by-step text, which is
+ *     what `instructions` means; the column was misnamed.
+ *  4. media is normalized to a fixed shape (see normalizeMedia) so every row carries
+ *     provenance/review state instead of just image URLs.
  *
  * Review gate: everything imports with reviewedBy = null EXCEPT a curated core subset
  * (base movement patterns, bodyweight/dumbbell) which is marked reviewedBy = 'system' so
@@ -15,13 +19,19 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PrismaClient, ExerciseType } from '@prisma/client';
+import { PrismaClient, ExerciseType, ContentMode } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
 interface RawContraindication {
   injury_area: string;
   reason?: string;
+}
+
+interface RawMedia {
+  start_img?: string | null;
+  end_img?: string | null;
+  video_url?: string | null;
 }
 
 interface RawExercise {
@@ -34,8 +44,8 @@ interface RawExercise {
   equipment: string[];
   difficulty: number;
   is_compound?: boolean | null;
-  cues?: string[] | null;
-  media?: Record<string, unknown> | null;
+  cues?: string[] | null; // -> instructions
+  media?: RawMedia | null;
   source?: Record<string, unknown> | null;
   movement_pattern?: string | null;
   goal_fit?: string[] | null;
@@ -88,6 +98,67 @@ function isCoreCandidate(raw: RawExercise): boolean {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// environments — derived from equipment, the only location signal in the source.
+// Bodyweight-only travels everywhere; heavy/rack equipment is gym-bound. Unknown
+// equipment stays gym-only (conservative: never promise a movement works at home).
+// ---------------------------------------------------------------------------
+const GYM_ONLY_EQUIPMENT = new Set(['barbell', 'other', 'unknown']);
+const PORTABLE_EQUIPMENT = new Set([
+  'bodyweight',
+  'dumbbell',
+  'kettlebell',
+  'resistance_band',
+  'medicine_ball',
+  'stability_ball',
+  'foam_roller',
+]);
+
+function deriveEnvironments(raw: RawExercise): string[] {
+  const equip = raw.equipment ?? [];
+  if (equip.some((e) => GYM_ONLY_EQUIPMENT.has(e))) return ['gym'];
+  const portable = equip.length > 0 && equip.every((e) => PORTABLE_EQUIPMENT.has(e));
+  if (!portable) return ['gym'];
+  // Bodyweight-only also works outdoors; loaded-but-portable is gym+home.
+  const bodyweightOnly = equip.every((e) => e === 'bodyweight');
+  return bodyweightOnly ? ['gym', 'home', 'outdoor'] : ['gym', 'home'];
+}
+
+/**
+ * normalizeMedia — every row gets the same shape so consumers never branch on
+ * missing keys. The source repo is a single uniform import (all 585 rows: two
+ * stills, no video, Unlicense), so provenance is constant here; these fields
+ * exist to carry NON-constant values once first-party media lands.
+ *
+ *  - instructorKey      who demonstrates (null = no human, stock illustration)
+ *  - productionStyleKey visual treatment, for mixing sources without a jarring feed
+ *  - ownership          'third_party' | 'licensed' | 'first_party' — drives takedown risk
+ *  - reviewStatus       gates display the same way Exercise.reviewedBy gates the pool
+ */
+function normalizeMedia(raw: RawExercise) {
+  const m = raw.media ?? {};
+  return {
+    startImg: m.start_img ?? null,
+    endImg: m.end_img ?? null,
+    videoUrl: m.video_url ?? null,
+    instructorKey: null, // stock stills from free-exercise-db — no named instructor
+    productionStyleKey: 'stock_still',
+    ownership: 'third_party',
+    reviewStatus: 'unreviewed',
+  };
+}
+
+/**
+ * contentMode — demonstration requires at least one still to show the movement;
+ * otherwise the client can only render the text steps.
+ */
+function deriveContentMode(raw: RawExercise): ContentMode {
+  const m = raw.media ?? {};
+  return m.start_img || m.video_url
+    ? ContentMode.demonstration
+    : ContentMode.instruction_only;
+}
+
 function mapContraindications(raw: RawContraindication[] | undefined) {
   return (raw ?? []).map((c) => ({
     injuryArea: c.injury_area, // <-- safety-critical rename
@@ -127,9 +198,11 @@ async function main() {
       equipment: r.equipment ?? [],
       difficulty: r.difficulty,
       isCompound: r.is_compound ?? null,
-      cues: r.cues ?? undefined,
-      media: r.media ?? undefined,
+      instructions: r.cues ?? undefined, // JSON key stays `cues`; column is `instructions`
+      media: normalizeMedia(r),
       source: r.source ?? undefined,
+      contentMode: deriveContentMode(r),
+      environments: deriveEnvironments(r),
       movementPattern: r.movement_pattern ?? null,
       goalFit: r.goal_fit ?? undefined,
       isUnilateral: r.is_unilateral ?? null,
