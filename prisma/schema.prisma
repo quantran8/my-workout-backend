@@ -1,0 +1,603 @@
+// schema.prisma — AI Fitness Coach backend
+// Postgres (Supabase). Prisma là data-access DUY NHẤT (supabase-js chỉ dùng cho Auth/Storage).
+// JSON field dùng cho block linh hoạt (constraint/target/flags/policy...) đã định nghĩa ở data model.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooler: ...?pgbouncer=true
+  directUrl = env("DIRECT_URL") // cho migrate
+}
+
+// ============================================================
+// USER  (auth do Supabase quản; bảng này giữ dữ liệu app)
+// ============================================================
+model User {
+  id                String                    @id @db.Uuid // = supabase auth.uid
+  createdAt         DateTime                  @default(now())
+  tier              Tier                      @default(FREE) // enforce free/paid boundary
+  profile           UserProfile?
+  profileHist       ProfileHistory[]
+  programs          Program[]
+  sessions          WorkoutSession[]
+  rollups           ProgressRollup[]
+  readiness         SessionReadiness[]
+  followups         PostSessionFollowup[]
+  movementRollups   MovementToleranceRollup[]
+  trainingDecisions TrainingDecision[]
+  adaptationPhases  AdaptationPhase[]
+}
+
+enum Tier {
+  FREE
+  PAID
+}
+
+// ============================================================
+// PROFILE  (constraint + target + flags)  — §1
+// ============================================================
+model UserProfile {
+  userId         String   @id @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileVersion Int      @default(1)
+  rawOnboarding  String // giữ đoạn kể gốc để re-analyze/audit
+  constraint     Json // Constraint block (xem profile.types.ts)
+  target         Json // Target block
+  redFlags       Json     @default("[]") // computed bởi flags.ts — KHÔNG do LLM
+  bmi            Float? // computed
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// snapshot mỗi version (append-only) — trả lời "plan dựa trên profile nào"
+model ProfileHistory {
+  id             String   @id @default(uuid())
+  userId         String   @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileVersion Int
+  snapshot       Json // toàn bộ profile tại version đó
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, profileVersion])
+}
+
+// ============================================================
+// MOVEMENT LIBRARY  — §2   (dữ liệu chung, không thuộc user)
+// ============================================================
+model Exercise {
+  exerciseId        String       @id // slug
+  name              String
+  aliases           Json         @default("[]")
+  exerciseType      ExerciseType
+  // deterministic (tin)
+  primaryMuscles    Json
+  secondaryMuscles  Json         @default("[]")
+  equipment         Json
+  difficulty        Int
+  isCompound        Boolean?
+  cues              Json? // instructions — KHÔNG gửi LLM, chỉ hiển thị
+  media             Json? // {startImg,endImg,videoUrl}
+  source            Json?
+  // heuristic (cần duyệt)
+  movementPattern   String?
+  goalFit           Json?
+  isUnilateral      Boolean?
+  // an toàn (chỉ ứng viên)
+  contraindications Json         @default("[]") // [{injuryArea,reason}] — guardrail đọc
+  // link tay
+  progressionOf     String?
+  regressionOf      String?
+  defaultRx         Json?
+  // TRẠNG THÁI DUYỆT — chỉ bài reviewedBy != null mới vào production pool
+  reviewedBy        String?
+  reviewedAt        DateTime?
+
+  @@index([movementPattern])
+  @@index([exerciseType])
+  @@index([difficulty])
+}
+
+enum ExerciseType {
+  resistance
+  cardio
+  mobility
+}
+
+// ============================================================
+// PROGRAM / PRESCRIPTION  — §3   (static free / living paid)
+// ============================================================
+model Program {
+  programId             String            @id @default(uuid())
+  userId                String            @db.Uuid
+  user                  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  basedOnProfileVersion Int
+  adaptationPhaseId     String? // §2 null nếu không cần
+  adaptationPhase       AdaptationPhase?  @relation(fields: [adaptationPhaseId], references: [adaptationPhaseId], onDelete: SetNull)
+  type                  ProgramType       @default(static) // free=static, paid=living
+  currentRevision       Int               @default(1)
+  goalSummary           String
+  phasePlan             Json? // [{phase,weeks,focus}]
+  status                ProgramStatus     @default(active)
+  createdAt             DateTime          @default(now())
+  revisions             ProgramRevision[]
+}
+
+enum ProgramType {
+  static
+  living
+}
+
+enum ProgramStatus {
+  active
+  archived
+}
+
+model ProgramRevision {
+  revisionId       String           @id @default(uuid())
+  programId        String
+  program          Program          @relation(fields: [programId], references: [programId], onDelete: Cascade)
+  revisionNumber   Int
+  adjustmentReason String? // null cho static v1; living ghi lý do
+  createdAt        DateTime         @default(now())
+  sessions         PlannedSession[]
+
+  @@unique([programId, revisionNumber]) // append-only
+}
+
+model PlannedSession {
+  plannedSessionId String          @id @default(uuid())
+  revisionId       String
+  revision         ProgramRevision @relation(fields: [revisionId], references: [revisionId], onDelete: Cascade)
+  weekNumber       Int
+  dayNumber        Int
+  focus            String
+  prescriptions    Prescription[]
+}
+
+model Prescription {
+  prescriptionId    String                 @id @default(uuid())
+  plannedSessionId  String
+  plannedSession    PlannedSession         @relation(fields: [plannedSessionId], references: [plannedSessionId], onDelete: Cascade)
+  exerciseId        String // -> Exercise (ràng buộc mềm ở app)
+  order             Int
+  targetSets        Int
+  targetReps        Json? // int | [min,max]
+  targetWeightKg    Float?
+  targetDurationSec Int?
+  targetDistanceM   Int?
+  targetRpe         Int?
+  restSec           Int
+  loggedSets        LoggedSet[]
+  executionItems    SessionExecutionItem[]
+}
+
+// ============================================================
+// SESSION LOG  — §4   (nguồn sự thật; thu cho CẢ free)
+// ============================================================
+model WorkoutSession {
+  sessionId            String                       @id @default(uuid())
+  userId               String                       @db.Uuid
+  user                 User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plannedSessionId     String?
+  programRevisionId    String
+  status               SessionStatus                @default(completed) // §5.0 lifecycle; default an toàn cho row cũ
+  environment          Environment                  @default(unknown) // ⚠ §5B
+  distanceSource       DistanceSource               @default(none)
+  dataSource           DataSource                   @default(manual)
+  startedAt            DateTime
+  endedAt              DateTime?
+  completionPct        Float?
+  sessionRpe           Int?
+  energyAfter          EnergyLevel?
+  notes                String?
+  wearable             Json? // nullable, cách ly (avgHr/hrv/vo2max...)
+  sets                 LoggedSet[]
+  // §5 safety loop back-relations
+  readiness            SessionReadiness?
+  executionItems       SessionExecutionItem[]
+  feedbackEvents       ExerciseFeedbackEvent[]
+  followups            PostSessionFollowup[]
+  toleranceAssessments SessionToleranceAssessment[]
+  trainingDecisions    TrainingDecision[]
+
+  @@index([userId, startedAt])
+}
+
+enum SessionStatus {
+  planned
+  in_progress
+  completed
+  aborted
+  held
+}
+
+enum Environment {
+  outdoor
+  indoor
+  unknown
+}
+
+enum DistanceSource {
+  gps
+  smart_trainer
+  bike_sensor
+  machine_manual
+  none
+}
+
+enum DataSource {
+  manual
+  healthkit_phone
+  wearable
+}
+
+enum EnergyLevel {
+  low
+  ok
+  high
+}
+
+model LoggedSet {
+  setId              String                  @id @default(uuid())
+  sessionId          String
+  session            WorkoutSession          @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  prescriptionId     String? // link planned vs actual
+  prescription       Prescription?           @relation(fields: [prescriptionId], references: [prescriptionId])
+  executionItemId    String? // §5.3 link tới snapshot bất biến
+  executionItem      SessionExecutionItem?   @relation(fields: [executionItemId], references: [executionItemId], onDelete: SetNull)
+  movementPattern    String? // denormalized cho tolerance rollup (§8)
+  exerciseId         String // denormalized để query nhanh
+  setNumber          Int
+  actualReps         Int?
+  actualWeightKg     Float?
+  actualDurationSec  Int?
+  actualDistanceM    Int?
+  actualPaceSecPerKm Float?
+  stroke             String?
+  actualRom          String?
+  actualRpe          Int?
+  feedbackFlag       FeedbackFlag?
+  fieldSources       Json? // {reps:'manual',pace:'auto',...}
+  feedbackEvents     ExerciseFeedbackEvent[]
+
+  @@index([exerciseId])
+  @@index([sessionId])
+  @@index([executionItemId])
+}
+
+// GIỮ cho back-compat (dual-write). §5.5 ExerciseFeedbackEvent là nguồn sự thật mới.
+enum FeedbackFlag {
+  too_easy
+  too_hard
+  uncomfortable
+  ok
+}
+
+// ============================================================
+// SESSION SAFETY LOOP  — §5   (free-tier, không sau paywall)
+// ============================================================
+
+// §5.1 — readiness thu TRƯỚC buổi. 1:1 với WorkoutSession qua sessionId @unique.
+model SessionReadiness {
+  readinessId        String                 @id @default(uuid())
+  sessionId          String                 @unique
+  session            WorkoutSession         @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  userId             String                 @db.Uuid
+  user               User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status             SessionReadinessStatus
+  currentDiscomforts Json                   @default("[]") // [{bodyArea,severity,affectsNormalMovement}]
+  residualSoreness   ResidualSoreness       @default(none)
+  energyLevel        ReadinessEnergyLevel   @default(normal)
+  externalLoads      Json                   @default("{}")
+  verdict            ReadinessVerdict       @default(unknown)
+  modifications      Json                   @default("[]") // deterministic — do assessReadiness sinh
+  ruleVersion        String
+  assessedAt         DateTime               @default(now())
+
+  @@index([userId, assessedAt])
+}
+
+enum SessionReadinessStatus {
+  completed
+  skipped
+}
+
+enum ResidualSoreness {
+  none
+  mild
+  moderate
+  severe
+}
+
+// tách khỏi EnergyLevel (post-session) — thang readiness riêng (§5.1)
+enum ReadinessEnergyLevel {
+  very_low
+  low
+  normal
+  high
+}
+
+enum ReadinessVerdict {
+  ready
+  modify
+  hold
+  unknown
+}
+
+// §5.3 — snapshot BẤT BIẾN của bài user thực sự được yêu cầu làm sau readiness.
+model SessionExecutionItem {
+  executionItemId      String                  @id @default(uuid())
+  sessionId            String
+  session              WorkoutSession          @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  sourcePrescriptionId String?
+  sourcePrescription   Prescription?           @relation(fields: [sourcePrescriptionId], references: [prescriptionId], onDelete: SetNull)
+  originalExerciseId   String? // exercise trước substitution/regression
+  exerciseId           String // exercise thực tế
+  movementPattern      String? // denormalized tại thời điểm snapshot
+  order                Int
+  plannedRx            Json? // target ban đầu
+  effectiveRx          Json? // target sau modifications (mốc so sánh)
+  appliedModifications Json                    @default("[]")
+  status               ExecutionItemStatus     @default(planned)
+  createdAt            DateTime                @default(now())
+  loggedSets           LoggedSet[]
+  feedbackEvents       ExerciseFeedbackEvent[]
+
+  @@index([sessionId, order])
+  @@index([exerciseId])
+  @@index([movementPattern])
+}
+
+enum ExecutionItemStatus {
+  planned
+  in_progress
+  completed
+  skipped
+  stopped
+}
+
+// §5.5 — feedback là EVENT (không phải flag trên set). Thêm pain_stop (INVARIANT §12.3).
+model ExerciseFeedbackEvent {
+  feedbackEventId   String                @id @default(uuid())
+  sessionId         String
+  session           WorkoutSession        @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  executionItemId   String?
+  executionItem     SessionExecutionItem? @relation(fields: [executionItemId], references: [executionItemId], onDelete: Cascade)
+  setId             String?
+  set               LoggedSet?            @relation(fields: [setId], references: [setId], onDelete: SetNull)
+  exerciseId        String
+  movementPattern   String?
+  occurredAt        DateTime              @default(now())
+  type              FeedbackEventType
+  bodyArea          String?
+  severity          Int? // 1-5 (validate ở DTO)
+  notes             String?
+  actionTaken       FeedbackActionTaken   @default(none)
+  triggeredFollowup Boolean               @default(false)
+
+  @@index([sessionId])
+  @@index([executionItemId])
+  @@index([exerciseId, movementPattern])
+  @@index([type])
+}
+
+enum FeedbackEventType {
+  too_easy
+  too_hard
+  uncomfortable
+  pain_stop
+  ok
+}
+
+enum FeedbackActionTaken {
+  none
+  reduce_remaining_sets
+  reduce_target
+  use_regression
+  substitute_exercise
+  stop_exercise
+  stop_related_pattern
+  end_session
+}
+
+// ============================================================
+// FOLLOW-UP + TOLERANCE  — §5.6/§6/§8/§9   (derived, free-tier)
+// ============================================================
+
+// §5.6 — vừa là yêu cầu check-in, vừa lưu phản ứng ngày hôm sau.
+model PostSessionFollowup {
+  followupId                        String         @id @default(uuid())
+  userId                            String         @db.Uuid
+  user                              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceSessionId                   String
+  sourceSession                     WorkoutSession @relation(fields: [sourceSessionId], references: [sessionId], onDelete: Cascade)
+  status                            FollowupStatus @default(scheduled)
+  triggerReasons                    Json           @default("[]")
+  scheduledFor                      DateTime
+  completedAt                       DateTime?
+  reactions                         Json           @default("[]") // [{bodyArea,onset,severity,functionalImpact,trend}]
+  requiresConservativeAction        Boolean        @default(false)
+  requiresProfessionalSupportPrompt Boolean        @default(false)
+  ruleVersion                       String
+  createdAt                         DateTime       @default(now())
+
+  @@index([userId, status])
+  @@index([scheduledFor])
+  @@index([sourceSessionId])
+}
+
+enum FollowupStatus {
+  scheduled
+  sent
+  completed
+  skipped
+  expired
+  cancelled
+}
+
+// §6 — đánh giá tolerance của MỘT session (derived, có thể update sau follow-up).
+model SessionToleranceAssessment {
+  assessmentId            String           @id @default(uuid())
+  sessionId               String
+  session                 WorkoutSession   @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  assessmentStage         AssessmentStage
+  readinessSignal         Json?
+  duringSessionSignal     Json?
+  delayedSignal           Json?
+  sessionToleranceVerdict ToleranceVerdict @default(pending)
+  affectedPatterns        Json             @default("[]")
+  affectedBodyAreas       Json             @default("[]")
+  evidenceRefs            Json             @default("[]")
+  ruleVersion             String
+  calculatedAt            DateTime         @default(now())
+
+  @@unique([sessionId, assessmentStage])
+  @@index([sessionToleranceVerdict])
+}
+
+enum AssessmentStage {
+  immediate
+  final_after_followup
+}
+
+enum ToleranceVerdict {
+  well_tolerated
+  tolerated
+  borderline
+  not_tolerated
+  pending
+}
+
+// §8 — rollup theo user + movement_pattern + cửa sổ (derived, recompute được).
+model MovementToleranceRollup {
+  rollupId                  String                   @id @default(uuid())
+  userId                    String                   @db.Uuid
+  user                      User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  movementPattern           String
+  windowStart               DateTime
+  windowEnd                 DateTime
+  exposureCount             Int                      @default(0)
+  toleratedExposureCount    Int                      @default(0)
+  borderlineExposureCount   Int                      @default(0)
+  notToleratedExposureCount Int                      @default(0)
+  consecutiveTolerated      Int                      @default(0)
+  painStopCount             Int                      @default(0)
+  recentToleratedLoad       Json?
+  painStopFrequency         Float                    @default(0)
+  toleranceVerdict          MovementToleranceVerdict @default(insufficient_data)
+  evidence                  Json                     @default("{}")
+  confidence                Confidence               @default(low)
+  calculationVersion        String
+  calculatedAt              DateTime                 @default(now())
+
+  @@unique([userId, movementPattern, windowStart])
+  @@index([userId, toleranceVerdict])
+}
+
+enum MovementToleranceVerdict {
+  tolerating
+  borderline
+  not_tolerating
+  insufficient_data
+}
+
+// §9 — training decision (free = safety-scope only).
+model TrainingDecision {
+  trainingDecisionId   String                    @id @default(uuid())
+  userId               String                    @db.Uuid
+  user                 User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId            String?
+  session              WorkoutSession?           @relation(fields: [sessionId], references: [sessionId], onDelete: SetNull)
+  scope                String                    @default("safety") // free: luôn 'safety'
+  readinessVerdict     ReadinessVerdict?
+  toleranceVerdict     MovementToleranceVerdict?
+  actions              Json                      @default("[]") // [{code,scope,target,reason}]
+  safetyOverrideActive Boolean                   @default(false)
+  neverIncreaseLoad    Boolean                   @default(false)
+  evidenceRefs         Json                      @default("[]")
+  ruleVersion          String
+  createdAt            DateTime                  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([sessionId])
+}
+
+// ============================================================
+// ADAPTATION PHASE  — §2   (stateful, free-tier)
+// ============================================================
+model AdaptationPhase {
+  adaptationPhaseId            String                @id @default(uuid())
+  userId                       String                @db.Uuid
+  user                         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileVersion               Int
+  status                       AdaptationPhaseStatus @default(not_required)
+  triggerReasons               Json                  @default("[]")
+  consecutiveToleratedSessions Int                   @default(0)
+  volumeCapPct                 Float?
+  difficultyCap                Int?
+  impactCap                    ImpactCap?
+  exitCriteria                 Json                  @default("{}")
+  ruleVersion                  String
+  createdAt                    DateTime              @default(now())
+  updatedAt                    DateTime              @updatedAt
+  programs                     Program[]
+
+  @@index([userId, status])
+}
+
+enum AdaptationPhaseStatus {
+  not_required
+  active
+  completed
+  paused
+  cancelled
+}
+
+enum ImpactCap {
+  low
+  moderate
+  high
+}
+
+// ============================================================
+// PROGRESS ROLLUP  — §5   (derived cache; PAID) — reserved, chưa dùng ở free tier
+// ============================================================
+model ProgressRollup {
+  rollupId          String            @id @default(uuid())
+  userId            String            @db.Uuid
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weekStart         DateTime
+  weekEnd           DateTime
+  perExercise       Json // ExerciseTrend[]
+  domainSummary     Json // {strength,endurance,mobility}
+  verdict           Verdict
+  verdictEvidence   Json
+  confidence        Confidence
+  recommendedAction RecommendedAction
+  interpretation    String? // câu LLM diễn giải
+  createdAt         DateTime          @default(now())
+
+  @@unique([userId, weekStart])
+}
+
+enum Verdict {
+  progressing
+  plateau
+  insufficient_data
+}
+
+enum Confidence {
+  high
+  medium
+  low
+}
+
+enum RecommendedAction {
+  hold
+  increase
+  decrease
+  change_program
+}
