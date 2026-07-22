@@ -36,13 +36,13 @@ describe('flags engine (ca 49kg)', () => {
 
 describe('guardrail lọc pool theo chấn thương', () => {
   const lib: Exercise[] = [
-    { exerciseId: 'ohp', name: 'Overhead Press', exerciseType: 'resistance',
+    { exerciseId: 'ohp', slug: 'ohp', name: 'Overhead Press', exerciseType: 'resistance',
       equipment: ['dumbbell'], difficulty: 3,
       contraindications: [{ injuryArea: 'shoulder' }] },
-    { exerciseId: 'goblet', name: 'Goblet Squat', exerciseType: 'resistance',
+    { exerciseId: 'goblet', slug: 'goblet', name: 'Goblet Squat', exerciseType: 'resistance',
       equipment: ['dumbbell'], difficulty: 2,
       contraindications: [{ injuryArea: 'knee' }] },
-    { exerciseId: 'pushup', name: 'Push-up', exerciseType: 'resistance',
+    { exerciseId: 'pushup', slug: 'pushup', name: 'Push-up', exerciseType: 'resistance',
       equipment: ['bodyweight'], difficulty: 2, contraindications: [] },
   ];
   const shoulderCase: Profile = {
@@ -73,11 +73,11 @@ describe('guardrail — adaptation phase caps (§2)', () => {
     target: { statedGoals: [], problems: [], inferredNeeds: [{ type: 'strength' }] },
   };
   const lib: Exercise[] = [
-    { exerciseId: 'easy', name: 'Easy', exerciseType: 'resistance',
+    { exerciseId: 'easy', slug: 'easy', name: 'Easy', exerciseType: 'resistance',
       equipment: ['dumbbell'], difficulty: 2, contraindications: [], impactLevel: 'low' },
-    { exerciseId: 'hard', name: 'Hard', exerciseType: 'resistance',
+    { exerciseId: 'hard', slug: 'hard', name: 'Hard', exerciseType: 'resistance',
       equipment: ['dumbbell'], difficulty: 4, contraindications: [], impactLevel: 'low' },
-    { exerciseId: 'jump', name: 'Box Jump', exerciseType: 'resistance',
+    { exerciseId: 'jump', slug: 'jump', name: 'Box Jump', exerciseType: 'resistance',
       equipment: ['bodyweight'], difficulty: 2, contraindications: [], impactLevel: 'high' },
   ];
 

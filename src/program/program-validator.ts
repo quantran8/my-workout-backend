@@ -32,7 +32,8 @@ export function validateProgram(
   opts?: { expectedDaysPerWeek?: number | null },
 ): ValidationResult {
   const violations: Violation[] = [];
-  const poolById = new Map<string, Exercise>(guard.allowedPool.map((e) => [e.exerciseId, e]));
+  // Key theo SLUG: đó là thứ LLM trả về, và uuid chỉ được gán sau khi map thành công.
+  const poolBySlug = new Map<string, Exercise>(guard.allowedPool.map((e) => [e.slug, e]));
   const sessions = program.revision.sessions;
 
   // 1) Mọi bài PHẢI ∈ pool
@@ -41,10 +42,10 @@ export function validateProgram(
       violations.push({ code: 'EMPTY_SESSION', detail: 'buổi không có bài nào', where: s.plannedSessionId });
     }
     for (const p of s.prescriptions) {
-      if (!poolById.has(p.exerciseId)) {
+      if (!poolBySlug.has(p.exerciseSlug)) {
         violations.push({
           code: 'EXERCISE_NOT_IN_POOL',
-          detail: `bài "${p.exerciseId}" không nằm trong allowedPool (bị guardrail loại hoặc LLM bịa)`,
+          detail: `bài "${p.exerciseSlug}" không nằm trong allowedPool (bị guardrail loại hoặc LLM bịa)`,
           where: `${s.plannedSessionId}#${p.order}`,
         });
       }
@@ -58,7 +59,7 @@ export function validateProgram(
     const setsByWeekMuscle = new Map<string, number>();
     for (const s of sessions) {
       for (const p of s.prescriptions) {
-        const ex = poolById.get(p.exerciseId);
+        const ex = poolBySlug.get(p.exerciseSlug);
         const muscles = (ex?.['primaryMuscles'] as string[] | undefined) ?? [];
         for (const m of muscles) {
           const key = `${s.weekNumber}:${m}`;
@@ -87,7 +88,7 @@ export function validateProgram(
     const cardioByWeek = new Map<number, number>();
     for (const s of sessions) {
       const hasCardio = s.prescriptions.some(
-        (p) => poolById.get(p.exerciseId)?.exerciseType === 'cardio',
+        (p) => poolBySlug.get(p.exerciseSlug)?.exerciseType === 'cardio',
       );
       if (hasCardio) cardioByWeek.set(s.weekNumber, (cardioByWeek.get(s.weekNumber) ?? 0) + 1);
     }

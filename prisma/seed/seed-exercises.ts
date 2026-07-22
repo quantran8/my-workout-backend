@@ -35,7 +35,7 @@ interface RawMedia {
 }
 
 interface RawExercise {
-  exercise_id: string;
+  slug: string;
   name: string;
   aliases?: string[];
   exercise_type: string;
@@ -181,14 +181,14 @@ async function main() {
     ...candidates.filter((e) => e.exercise_type === 'resistance'),
     ...candidates.filter((e) => e.exercise_type !== 'resistance'),
   ];
-  const reviewedIds = new Set(
-    resistanceFirst.slice(0, CORE_TARGET_COUNT).map((e) => e.exercise_id),
+  const reviewedSlugs = new Set(
+    resistanceFirst.slice(0, CORE_TARGET_COUNT).map((e) => e.slug),
   );
   const reviewedAt = new Date();
 
   let count = 0;
   for (const r of raw) {
-    const reviewed = reviewedIds.has(r.exercise_id);
+    const reviewed = reviewedSlugs.has(r.slug);
     const data = {
       name: r.name,
       aliases: r.aliases ?? [],
@@ -207,8 +207,6 @@ async function main() {
       goalFit: r.goal_fit ?? undefined,
       isUnilateral: r.is_unilateral ?? null,
       contraindications: mapContraindications(r.contraindications),
-      progressionOf: r.progression_of ?? null,
-      regressionOf: r.regression_of ?? null,
       // default_prescription internals (rep_range/rest_sec) stay snake in the blob:
       // only the LLM reads them, and slimPool passes them through unchanged.
       defaultRx: r.default_prescription ?? undefined,
@@ -217,16 +215,48 @@ async function main() {
     };
 
     await prisma.exercise.upsert({
-      where: { exerciseId: r.exercise_id },
+      where: { slug: r.slug },
       // Do NOT overwrite a human PT's review on re-seed.
       update: reviewed ? data : { ...data, reviewedBy: undefined, reviewedAt: undefined },
-      create: { exerciseId: r.exercise_id, ...data },
+      create: { slug: r.slug, ...data },
     });
     count++;
   }
 
+  // Pass 2: progression_of/regression_of are slugs in the JSON but uuid FKs in the DB,
+  // so they can only be resolved once every row above exists.
+  const idBySlug = new Map(
+    (await prisma.exercise.findMany({ select: { id: true, slug: true } })).map(
+      (e) => [e.slug, e.id] as const,
+    ),
+  );
+  let linked = 0;
+  const dangling: string[] = [];
+  for (const r of raw) {
+    if (!r.progression_of && !r.regression_of) continue;
+    const resolve = (slug: string | null | undefined) => {
+      if (!slug) return null;
+      const id = idBySlug.get(slug);
+      if (!id) dangling.push(`${r.slug} -> ${slug}`);
+      return id ?? null;
+    };
+    await prisma.exercise.update({
+      where: { slug: r.slug },
+      data: {
+        progressionOf: resolve(r.progression_of),
+        regressionOf: resolve(r.regression_of),
+      },
+    });
+    linked++;
+  }
+  if (dangling.length) {
+    console.warn(
+      `WARN ${dangling.length} unresolved progression/regression slug(s): ${dangling.slice(0, 10).join(', ')}`,
+    );
+  }
+
   console.log(
-    `Seeded ${count} exercises; ${reviewedIds.size} marked reviewedBy='${REVIEWER}'.`,
+    `Seeded ${count} exercises; ${reviewedSlugs.size} marked reviewedBy='${REVIEWER}'; ${linked} progression/regression link(s) resolved.`,
   );
 }
 

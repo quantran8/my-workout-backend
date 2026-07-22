@@ -54,7 +54,7 @@ model UserProfile {
 
 // snapshot mỗi version (append-only) — trả lời "plan dựa trên profile nào"
 model ProfileHistory {
-  id             String   @id @default(uuid())
+  id             String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   userId         String   @db.Uuid
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   profileVersion Int
@@ -68,7 +68,8 @@ model ProfileHistory {
 // MOVEMENT LIBRARY  — §2   (dữ liệu chung, không thuộc user)
 // ============================================================
 model Exercise {
-  exerciseId        String       @id // slug
+  id                String       @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  slug              String       @unique // human-readable key ("Barbell_Squat"); LLM chọn bài theo slug này
   name              String
   aliases           Json         @default("[]")
   exerciseType      ExerciseType
@@ -93,8 +94,8 @@ model Exercise {
   // an toàn (chỉ ứng viên)
   contraindications Json         @default("[]") // [{injuryArea,reason}] — guardrail đọc
   // link tay
-  progressionOf     String?
-  regressionOf      String?
+  progressionOf     String?      @db.Uuid
+  regressionOf      String?      @db.Uuid
   defaultRx         Json?
   // TRẠNG THÁI DUYỆT — chỉ bài reviewedBy != null mới vào production pool
   reviewedBy        String?
@@ -121,12 +122,12 @@ enum ContentMode {
 // PROGRAM / PRESCRIPTION  — §3   (static free / living paid)
 // ============================================================
 model Program {
-  programId             String            @id @default(uuid())
+  id                    String            @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   userId                String            @db.Uuid
   user                  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   basedOnProfileVersion Int
-  adaptationPhaseId     String? // §2 null nếu không cần
-  adaptationPhase       AdaptationPhase?  @relation(fields: [adaptationPhaseId], references: [adaptationPhaseId], onDelete: SetNull)
+  adaptationPhaseId     String?           @db.Uuid // §2 null nếu không cần
+  adaptationPhase       AdaptationPhase?  @relation(fields: [adaptationPhaseId], references: [id], onDelete: SetNull)
   type                  ProgramType       @default(static) // free=static, paid=living
   currentRevision       Int               @default(1)
   goalSummary           String
@@ -147,9 +148,9 @@ enum ProgramStatus {
 }
 
 model ProgramRevision {
-  revisionId       String           @id @default(uuid())
-  programId        String
-  program          Program          @relation(fields: [programId], references: [programId], onDelete: Cascade)
+  id               String           @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  programId        String           @db.Uuid
+  program          Program          @relation(fields: [programId], references: [id], onDelete: Cascade)
   revisionNumber   Int
   adjustmentReason String? // null cho static v1; living ghi lý do
   createdAt        DateTime         @default(now())
@@ -159,13 +160,13 @@ model ProgramRevision {
 }
 
 model PlannedSession {
-  plannedSessionId String          @id @default(uuid())
-  revisionId       String
-  revision         ProgramRevision @relation(fields: [revisionId], references: [revisionId], onDelete: Cascade)
-  weekNumber       Int
-  dayNumber        Int
-  focus            String
-  prescriptions    Prescription[]
+  id            String          @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  revisionId    String          @db.Uuid
+  revision      ProgramRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  weekNumber    Int
+  dayNumber     Int
+  focus         String
+  prescriptions Prescription[]
 }
 
 model Prescription {
@@ -217,11 +218,11 @@ enum WorkoutBlockPhase {
 // SESSION LOG  — §4   (nguồn sự thật; thu cho CẢ free)
 // ============================================================
 model WorkoutSession {
-  sessionId            String                       @id @default(uuid())
+  id                   String                       @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   userId               String                       @db.Uuid
   user                 User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plannedSessionId     String?
-  programRevisionId    String
+  plannedSessionId     String?                      @db.Uuid
+  programRevisionId    String                       @db.Uuid
   status               SessionStatus                @default(completed) // §5.0 lifecycle; default an toàn cho row cũ
   environment          Environment                  @default(unknown) // ⚠ §5B
   distanceSource       DistanceSource               @default(none)
@@ -280,15 +281,15 @@ enum EnergyLevel {
 }
 
 model LoggedSet {
-  setId              String                  @id @default(uuid())
-  sessionId          String
-  session            WorkoutSession          @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
-  prescriptionId     String? // link planned vs actual
-  prescription       Prescription?           @relation(fields: [prescriptionId], references: [prescriptionId])
-  executionItemId    String? // §5.3 link tới snapshot bất biến
-  executionItem      SessionExecutionItem?   @relation(fields: [executionItemId], references: [executionItemId], onDelete: SetNull)
+  id                 String                  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  sessionId          String                  @db.Uuid
+  session            WorkoutSession          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  prescriptionId     String?                 @db.Uuid // link planned vs actual
+  prescription       Prescription?           @relation(fields: [prescriptionId], references: [id])
+  executionItemId    String?                 @db.Uuid // §5.3 link tới snapshot bất biến
+  executionItem      SessionExecutionItem?   @relation(fields: [executionItemId], references: [id], onDelete: SetNull)
   movementPattern    String? // denormalized cho tolerance rollup (§8)
-  exerciseId         String // denormalized để query nhanh
+  exerciseId         String                  @db.Uuid // denormalized để query nhanh
   setNumber          Int
   actualReps         Int?
   actualWeightKg     Float?
@@ -321,9 +322,9 @@ enum FeedbackFlag {
 
 // §5.1 — readiness thu TRƯỚC buổi. 1:1 với WorkoutSession qua sessionId @unique.
 model SessionReadiness {
-  readinessId        String                 @id @default(uuid())
-  sessionId          String                 @unique
-  session            WorkoutSession         @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  id                 String                 @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  sessionId          String                 @unique @db.Uuid
+  session            WorkoutSession         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   userId             String                 @db.Uuid
   user               User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   status             SessionReadinessStatus
@@ -368,13 +369,13 @@ enum ReadinessVerdict {
 
 // §5.3 — snapshot BẤT BIẾN của bài user thực sự được yêu cầu làm sau readiness.
 model SessionExecutionItem {
-  executionItemId      String                  @id @default(uuid())
-  sessionId            String
-  session              WorkoutSession          @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
-  sourcePrescriptionId String?
-  sourcePrescription   Prescription?           @relation(fields: [sourcePrescriptionId], references: [prescriptionId], onDelete: SetNull)
-  originalExerciseId   String? // exercise trước substitution/regression
-  exerciseId           String // exercise thực tế
+  id                   String                  @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  sessionId            String                  @db.Uuid
+  session              WorkoutSession          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sourcePrescriptionId String?                 @db.Uuid
+  sourcePrescription   Prescription?           @relation(fields: [sourcePrescriptionId], references: [id], onDelete: SetNull)
+  originalExerciseId   String?                 @db.Uuid // exercise trước substitution/regression
+  exerciseId           String                  @db.Uuid // exercise thực tế
   movementPattern      String? // denormalized tại thời điểm snapshot
   order                Int
   plannedRx            Json? // target ban đầu
@@ -400,14 +401,14 @@ enum ExecutionItemStatus {
 
 // §5.5 — feedback là EVENT (không phải flag trên set). Thêm pain_stop (INVARIANT §12.3).
 model ExerciseFeedbackEvent {
-  feedbackEventId   String                @id @default(uuid())
-  sessionId         String
-  session           WorkoutSession        @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
-  executionItemId   String?
-  executionItem     SessionExecutionItem? @relation(fields: [executionItemId], references: [executionItemId], onDelete: Cascade)
-  setId             String?
-  set               LoggedSet?            @relation(fields: [setId], references: [setId], onDelete: SetNull)
-  exerciseId        String
+  id                String                @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  sessionId         String                @db.Uuid
+  session           WorkoutSession        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  executionItemId   String?               @db.Uuid
+  executionItem     SessionExecutionItem? @relation(fields: [executionItemId], references: [id], onDelete: Cascade)
+  setId             String?               @db.Uuid
+  set               LoggedSet?            @relation(fields: [setId], references: [id], onDelete: SetNull)
+  exerciseId        String                @db.Uuid
   movementPattern   String?
   occurredAt        DateTime              @default(now())
   type              FeedbackEventType
@@ -448,11 +449,11 @@ enum FeedbackActionTaken {
 
 // §5.6 — vừa là yêu cầu check-in, vừa lưu phản ứng ngày hôm sau.
 model PostSessionFollowup {
-  followupId                        String         @id @default(uuid())
+  id                                String         @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   userId                            String         @db.Uuid
   user                              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sourceSessionId                   String
-  sourceSession                     WorkoutSession @relation(fields: [sourceSessionId], references: [sessionId], onDelete: Cascade)
+  sourceSessionId                   String         @db.Uuid
+  sourceSession                     WorkoutSession @relation(fields: [sourceSessionId], references: [id], onDelete: Cascade)
   status                            FollowupStatus @default(scheduled)
   triggerReasons                    Json           @default("[]")
   scheduledFor                      DateTime
@@ -479,9 +480,9 @@ enum FollowupStatus {
 
 // §6 — đánh giá tolerance của MỘT session (derived, có thể update sau follow-up).
 model SessionToleranceAssessment {
-  assessmentId            String           @id @default(uuid())
-  sessionId               String
-  session                 WorkoutSession   @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  id                      String           @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  sessionId               String           @db.Uuid
+  session                 WorkoutSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   assessmentStage         AssessmentStage
   readinessSignal         Json?
   duringSessionSignal     Json?
@@ -512,7 +513,7 @@ enum ToleranceVerdict {
 
 // §8 — rollup theo user + movement_pattern + cửa sổ (derived, recompute được).
 model MovementToleranceRollup {
-  rollupId                  String                   @id @default(uuid())
+  id                        String                   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   userId                    String                   @db.Uuid
   user                      User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   movementPattern           String
@@ -545,11 +546,11 @@ enum MovementToleranceVerdict {
 
 // §9 — training decision (free = safety-scope only).
 model TrainingDecision {
-  trainingDecisionId   String                    @id @default(uuid())
+  id                   String                    @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   userId               String                    @db.Uuid
   user                 User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sessionId            String?
-  session              WorkoutSession?           @relation(fields: [sessionId], references: [sessionId], onDelete: SetNull)
+  sessionId            String?                   @db.Uuid
+  session              WorkoutSession?           @relation(fields: [sessionId], references: [id], onDelete: SetNull)
   scope                String                    @default("safety") // free: luôn 'safety'
   readinessVerdict     ReadinessVerdict?
   toleranceVerdict     MovementToleranceVerdict?
@@ -568,7 +569,7 @@ model TrainingDecision {
 // ADAPTATION PHASE  — §2   (stateful, free-tier)
 // ============================================================
 model AdaptationPhase {
-  adaptationPhaseId            String                @id @default(uuid())
+  id                           String                @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   userId                       String                @db.Uuid
   user                         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   profileVersion               Int
@@ -605,7 +606,7 @@ enum ImpactCap {
 // PROGRESS ROLLUP  — §5   (derived cache; PAID) — reserved, chưa dùng ở free tier
 // ============================================================
 model ProgressRollup {
-  rollupId          String            @id @default(uuid())
+  id                String            @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   userId            String            @db.Uuid
   user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   weekStart         DateTime

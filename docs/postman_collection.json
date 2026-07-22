@@ -1,0 +1,467 @@
+{
+  "info": {
+    "_postman_id": "9c1e4a20-2f77-4f2a-9c5d-ai-fitness-coach",
+    "name": "AI Fitness Coach — Backend API",
+    "description": "NestJS + Prisma + Supabase backend.\n\n**Global prefix:** `api/v1` (set in `src/main.ts`).\n\n**Auth:** every endpoint except `GET /health` is behind `AuthGuard` (Supabase JWT via Passport). Put a valid Supabase access token in the `accessToken` collection variable — it is sent as `Authorization: Bearer {{accessToken}}` at collection level.\n\n**Validation:** global `ValidationPipe` with `whitelist: true` + `transform: true`, so unknown body fields are stripped and types are implicitly converted.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000", "type": "string" },
+    { "key": "apiPrefix", "value": "api/v1", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "sessionId", "value": "", "type": "string" },
+    { "key": "followupId", "value": "", "type": "string" },
+    { "key": "programRevisionId", "value": "", "type": "string" },
+    { "key": "exerciseId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "health"]
+            },
+            "description": "Liveness probe. The only public route."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Profile",
+      "item": [
+        {
+          "name": "POST /profile/extract",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rawText\": \"Mình nam, 28 tuổi, cao 172cm nặng 74kg. Trước có tập gym 2 năm nhưng nghỉ khoảng 8 tháng rồi. Vai phải thỉnh thoảng đau khi đẩy tạ qua đầu, lưng dưới hơi mỏi khi ngồi lâu. Mục tiêu là giảm mỡ bụng và khỏe lại, tập được 3 buổi/tuần, mỗi buổi 60 phút, tập ở phòng gym.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/profile/extract",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "profile", "extract"]
+            },
+            "description": "Raw onboarding text -> draft profile + red flags. **Không lưu DB** — dành cho màn xác nhận. Body: `ExtractProfileDto { rawText: string (non-empty) }`."
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /profile",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"constraint\": {\n    \"sex\": \"male\",\n    \"age\": 28,\n    \"heightCm\": 172,\n    \"weightKg\": 74,\n    \"experienceLevel\": \"intermediate\",\n    \"recentActivityLevel\": \"low\",\n    \"detrainingDurationWeeks\": 32,\n    \"lastConsistentTrainingAt\": \"2025-11-01\",\n    \"injuries\": [\n      {\n        \"area\": \"shoulder\",\n        \"severity\": \"mild\",\n        \"notes\": \"đau khi đẩy qua đầu\",\n        \"active\": true,\n        \"status\": \"recovering\",\n        \"movementTriggers\": [\"overhead_press\"]\n      },\n      {\n        \"area\": \"lower_back\",\n        \"severity\": \"mild\",\n        \"active\": false,\n        \"status\": \"historical\",\n        \"movementTriggers\": []\n      }\n    ],\n    \"mobilityLimits\": [\"shoulder_flexion\"],\n    \"equipment\": [\"barbell\", \"dumbbell\", \"cable\", \"treadmill\"],\n    \"space\": \"gym\",\n    \"budgetWillingness\": \"minimal\",\n    \"schedule\": {\n      \"daysPerWeek\": 3,\n      \"minutesPerSession\": 60,\n      \"preferredDays\": [\"mon\", \"wed\", \"fri\"]\n    },\n    \"diet\": {\n      \"type\": \"omnivore\",\n      \"allergies\": [],\n      \"restrictions\": []\n    }\n  },\n  \"target\": {\n    \"statedGoals\": [\"giảm mỡ bụng\", \"khỏe lại\"],\n    \"problems\": [\"đau vai phải\", \"mỏi lưng dưới khi ngồi lâu\"],\n    \"inferredNeeds\": [\n      {\n        \"type\": \"weight_loss\",\n        \"targetArea\": [\"abdomen\"],\n        \"rationale\": \"stated goal giảm mỡ bụng\",\n        \"confidence\": \"high\"\n      },\n      {\n        \"type\": \"strength\",\n        \"targetArea\": [\"full_body\"],\n        \"rationale\": \"detraining 8 tháng, cần xây lại nền\",\n        \"confidence\": \"medium\"\n      },\n      {\n        \"type\": \"mobility\",\n        \"targetArea\": [\"shoulder\"],\n        \"rationale\": \"giới hạn shoulder flexion\",\n        \"confidence\": \"medium\"\n      }\n    ]\n  },\n  \"rawOnboarding\": \"Mình nam, 28 tuổi, cao 172cm nặng 74kg...\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "profile"]
+            },
+            "description": "User confirm bản đã sửa. Server **recompute** `bmi` + red flags — giá trị client gửi lên cho các field computed sẽ bị bỏ qua. Append vào profile history.\n\n`UpdateProfileDto { constraint: object, target: { statedGoals: string[], problems?: string[], inferredNeeds: unknown[] }, rawOnboarding?: string }`."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "profile"]
+            },
+            "description": "Profile hiện hành của user đang đăng nhập (lấy từ JWT)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Program",
+      "item": [
+        {
+          "name": "POST /program/generate",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "const revId = j.revisionId || j.programRevisionId || j?.revision?.id;",
+                  "if (revId) pm.collectionVariables.set('programRevisionId', revId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": { "mode": "raw", "raw": "" },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/program/generate",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "program", "generate"]
+            },
+            "description": "Gen static program đồng bộ: guardrail -> LLM -> validate/repair. **Không cần body** — dùng profile hiện hành của user.\n\nCó thể chạy lâu (LLM call) — tăng timeout trong Postman nếu cần."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /program/active",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "const revId = j?.revision?.id || j.revisionId || j.programRevisionId;",
+                  "if (revId) pm.collectionVariables.set('programRevisionId', revId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/program/active",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "program", "active"]
+            },
+            "description": "Program + revision hiện hành. Test script tự lưu `programRevisionId` vào collection variable cho các request session."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Session — lifecycle",
+      "description": "Luồng chuẩn: create -> readiness -> execution -> sets -> feedback -> complete.",
+      "item": [
+        {
+          "name": "1. POST /session/create",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "const id = j.id || j.sessionId || j?.session?.id;",
+                  "if (id) pm.collectionVariables.set('sessionId', id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"programRevisionId\": \"{{programRevisionId}}\",\n  \"plannedSessionId\": null,\n  \"startedAt\": \"2026-07-22T09:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "create"]
+            },
+            "description": "Tạo vỏ buổi (chưa có set). `programRevisionId` bắt buộc; `startedAt` phải là ISO date string. Test script lưu `sessionId`."
+          },
+          "response": []
+        },
+        {
+          "name": "2. POST /session/:id/readiness",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answered\": true,\n  \"discomforts\": [\n    {\n      \"bodyArea\": \"shoulder\",\n      \"severity\": \"mild\",\n      \"affectsNormalMovement\": false\n    }\n  ],\n  \"residualSoreness\": \"mild\",\n  \"energyLevel\": \"ok\",\n  \"externalLoads\": {\n    \"poorSleep\": false,\n    \"highStress\": true,\n    \"illness\": false\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/{{sessionId}}/readiness",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "{{sessionId}}", "readiness"]
+            },
+            "description": "Readiness gate (§5.1). `answered: false` -> nhánh unknown (conservative default), các field còn lại có thể bỏ trống.\n\nEnums: `severity` mild|moderate|severe · `residualSoreness` none|mild|moderate|high · `energyLevel` low|ok|high."
+          },
+          "response": []
+        },
+        {
+          "name": "2b. POST /session/:id/readiness (unanswered)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answered\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/{{sessionId}}/readiness",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "{{sessionId}}", "readiness"]
+            },
+            "description": "Biến thể: user skip readiness -> server dùng conservative default."
+          },
+          "response": []
+        },
+        {
+          "name": "3. POST /session/:id/execution",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": { "mode": "raw", "raw": "" },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/{{sessionId}}/execution",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "{{sessionId}}", "execution"]
+            },
+            "description": "Dựng snapshot bất biến của buổi tập (§5.3). Không cần body. Trả về execution items — lấy `executionItemId` + `exerciseId` cho bước log sets."
+          },
+          "response": []
+        },
+        {
+          "name": "4. POST /session/:id/sets",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sets\": [\n    {\n      \"executionItemId\": null,\n      \"prescriptionId\": null,\n      \"exerciseId\": \"{{exerciseId}}\",\n      \"movementPattern\": \"squat\",\n      \"setNumber\": 1,\n      \"actualReps\": 10,\n      \"actualWeightKg\": 40,\n      \"actualRpe\": 7,\n      \"fieldSources\": { \"actualWeightKg\": \"manual\" }\n    },\n    {\n      \"exerciseId\": \"{{exerciseId}}\",\n      \"movementPattern\": \"squat\",\n      \"setNumber\": 2,\n      \"actualReps\": 9,\n      \"actualWeightKg\": 42.5,\n      \"actualRpe\": 8\n    },\n    {\n      \"exerciseId\": \"run-treadmill\",\n      \"movementPattern\": \"cardio\",\n      \"setNumber\": 1,\n      \"actualDurationSec\": 900,\n      \"actualDistanceM\": 2400,\n      \"actualPaceSecPerKm\": 375,\n      \"actualRpe\": 6\n    },\n    {\n      \"exerciseId\": \"shoulder-mobility-cars\",\n      \"movementPattern\": \"mobility\",\n      \"setNumber\": 1,\n      \"actualDurationSec\": 60,\n      \"actualRom\": \"partial\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/{{sessionId}}/sets",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "{{sessionId}}", "sets"]
+            },
+            "description": "Log `LoggedSet[]` — append-able, idempotent theo `setNumber` + `exerciseId`.\n\nCác nhóm field theo modality: **resistance** (`actualReps`, `actualWeightKg`) · **cardio** (`actualDurationSec`, `actualDistanceM`, `actualPaceSecPerKm`, `stroke`) · **mobility** (`actualRom`). Chỉ `exerciseId` và `setNumber` (>=1) là bắt buộc."
+          },
+          "response": []
+        },
+        {
+          "name": "5. POST /session/:id/feedback (too_hard)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"executionItemId\": null,\n  \"setId\": null,\n  \"exerciseId\": \"{{exerciseId}}\",\n  \"movementPattern\": \"squat\",\n  \"type\": \"too_hard\",\n  \"notes\": \"set cuối phải giảm tốc\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/{{sessionId}}/feedback",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "{{sessionId}}", "feedback"]
+            },
+            "description": "Một `ExerciseFeedbackEvent` (§5.5). `type` ∈ too_easy | too_hard | uncomfortable | pain_stop | ok."
+          },
+          "response": []
+        },
+        {
+          "name": "5b. POST /session/:id/feedback (pain_stop)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exerciseId\": \"{{exerciseId}}\",\n  \"movementPattern\": \"overhead_press\",\n  \"type\": \"pain_stop\",\n  \"bodyArea\": \"shoulder\",\n  \"severity\": 3,\n  \"notes\": \"nhói khi lên đến đỉnh, dừng giữa set 2\",\n  \"spreadsToRelatedPattern\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/{{sessionId}}/feedback",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "{{sessionId}}", "feedback"]
+            },
+            "description": "Nhánh `pain_stop` (§12.3). `severity` 1–5. `spreadsToRelatedPattern` là interpreter thô — **không phải verdict**, safety decision do server quyết."
+          },
+          "response": []
+        },
+        {
+          "name": "6. POST /session/:id/complete",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "const fid = j?.followup?.id || j.followupId;",
+                  "if (fid) pm.collectionVariables.set('followupId', fid);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": { "mode": "raw", "raw": "" },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/{{sessionId}}/complete",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "{{sessionId}}", "complete"]
+            },
+            "description": "Kết buổi: tổng hợp feedback + tolerance + schedule follow-up. Không cần body. Test script lưu `followupId` nếu response có."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Session — read & back-compat",
+      "item": [
+        {
+          "name": "POST /session (one-shot, back-compat §5)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plannedSessionId\": null,\n  \"programRevisionId\": \"{{programRevisionId}}\",\n  \"environment\": \"indoor\",\n  \"distanceSource\": \"machine_manual\",\n  \"dataSource\": \"manual\",\n  \"startedAt\": \"2026-07-22T09:00:00.000Z\",\n  \"endedAt\": \"2026-07-22T10:05:00.000Z\",\n  \"sessionRpe\": 7,\n  \"energyAfter\": \"ok\",\n  \"notes\": \"buổi ổn, vai hơi gợn ở overhead\",\n  \"wearable\": {\n    \"avgHr\": 132,\n    \"maxHr\": 168,\n    \"calories\": 480\n  },\n  \"sets\": [\n    {\n      \"prescriptionId\": null,\n      \"exerciseId\": \"{{exerciseId}}\",\n      \"setNumber\": 1,\n      \"actualReps\": 10,\n      \"actualWeightKg\": 40,\n      \"actualRpe\": 7,\n      \"feedbackFlag\": \"ok\",\n      \"fieldSources\": { \"actualWeightKg\": \"manual\" }\n    },\n    {\n      \"exerciseId\": \"run-treadmill\",\n      \"setNumber\": 1,\n      \"actualDurationSec\": 900,\n      \"actualDistanceM\": 2400,\n      \"actualPaceSecPerKm\": 375,\n      \"actualRpe\": 6,\n      \"feedbackFlag\": \"too_easy\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session"]
+            },
+            "description": "One-shot: lưu cả buổi + trả phản hồi-sau-buổi trong 1 call. **Client mới nên dùng lifecycle endpoints.**\n\nEnums: `environment` outdoor|indoor|unknown · `distanceSource` gps|smart_trainer|bike_sensor|machine_manual|none · `dataSource` manual|healthkit_phone|wearable · `energyAfter` low|ok|high · `feedbackFlag` too_easy|too_hard|uncomfortable|ok (không có pain_stop ở endpoint này)."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /session/history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/history?from=2026-06-01&to=2026-07-22",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "history"],
+              "query": [
+                { "key": "from", "value": "2026-06-01", "description": "optional — ISO date" },
+                { "key": "to", "value": "2026-07-22", "description": "optional — ISO date" }
+              ]
+            },
+            "description": "Lịch sử buổi tập. Cả hai query param đều optional — bỏ hết để lấy toàn bộ."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /session/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/session/{{sessionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "session", "{{sessionId}}"]
+            },
+            "description": "Chi tiết một buổi. Lưu ý route order: `/session/history` được khai báo trước `/session/:id` nên `history` không bị nuốt bởi param."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Follow-up",
+      "item": [
+        {
+          "name": "POST /followup/:id/complete",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"feelWorse\": false,\n  \"newPainAppeared\": false,\n  \"sorenessLingering\": true,\n  \"recoveredWell\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/followup/{{followupId}}/complete",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "followup", "{{followupId}}", "complete"]
+            },
+            "description": "Phản ứng ngày hôm sau (§5.6) -> final tolerance + safety decision. Cả 4 boolean đều **bắt buộc**."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin — Exercises",
+      "item": [
+        {
+          "name": "GET /admin/exercises/review-queue",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "const first = Array.isArray(j) ? j[0] : (j?.items?.[0] || j?.data?.[0]);",
+                  "if (first?.id) pm.collectionVariables.set('exerciseId', first.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/admin/exercises/review-queue",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "admin", "exercises", "review-queue"]
+            },
+            "description": "Movement library items chờ PT review. Chỉ có `AuthGuard` — chưa có admin-role guard riêng."
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /admin/exercises/:id/review",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reviewedBy\": \"pt_alan\",\n  \"movementPattern\": \"hinge\",\n  \"goalFit\": [\"strength\", \"hypertrophy\"],\n  \"difficulty\": 3,\n  \"contraindications\": [\n    {\n      \"injuryArea\": \"lower_back\",\n      \"reason\": \"tải trục cột sống cao ở vị trí gập\"\n    },\n    {\n      \"injuryArea\": \"shoulder\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/admin/exercises/{{exerciseId}}/review",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "admin", "exercises", "{{exerciseId}}", "review"]
+            },
+            "description": "PT xác nhận field heuristic và mark reviewed (`reviewedBy`/`reviewedAt` set server-side). Chỉ `reviewedBy` bắt buộc; `difficulty` 1–5."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

@@ -128,7 +128,8 @@ export class ProfileService {
       where: { reviewedBy: { not: null } },
     });
     const library: Exercise[] = rows.map((r) => ({
-      exerciseId: r.exerciseId,
+      exerciseId: r.id,
+      slug: r.slug,
       name: r.name,
       exerciseType: r.exerciseType,
       equipment: (r.equipment as unknown as string[]) ?? [],

@@ -27,7 +27,8 @@ const profile: Profile = {
 
 const pool: Exercise[] = [
   {
-    exerciseId: 'goblet_squat',
+    exerciseId: '01919f00-0000-7000-8000-000000000001', // uuid v7 — khoá DB
+    slug: 'goblet_squat', // key LLM dùng
     name: 'Goblet Squat',
     exerciseType: 'resistance',
     equipment: ['dumbbell'],
@@ -134,9 +135,10 @@ describe('ProgramService.generateStaticProgram (validate/repair loop)', () => {
     expect(persist).toHaveBeenCalledTimes(1);
     expect(program.type).toBe('static');
     expect(program.currentRevision).toBe(1);
-    expect(program.revision.sessions[0].prescriptions[0].exerciseId).toBe(
-      'goblet_squat',
-    );
+    // LLM trả slug; assembleProgram phải dịch sang uuid v7 để ghi DB, giữ slug để đối chiếu.
+    const rx = program.revision.sessions[0].prescriptions[0];
+    expect(rx.exerciseSlug).toBe('goblet_squat');
+    expect(rx.exerciseId).toBe('01919f00-0000-7000-8000-000000000001');
   });
 
   it('repairs: violating draft then clean draft -> succeeds on attempt 2', async () => {

@@ -77,11 +77,11 @@ export class SessionService {
 
     // exTypeOf từ movement library
     const exRows = await this.prisma.exercise.findMany({
-      where: { exerciseId: { in: exerciseIds } },
-      select: { exerciseId: true, exerciseType: true },
+      where: { id: { in: exerciseIds } },
+      select: { id: true, exerciseType: true },
     });
     const typeMap = new Map<string, ExType>(
-      exRows.map((r) => [r.exerciseId, r.exerciseType as ExType]),
+      exRows.map((r) => [r.id, r.exerciseType as ExType]),
     );
     const exTypeOf = (id: string): ExType => typeMap.get(id) ?? 'resistance';
 
@@ -113,7 +113,7 @@ export class SessionService {
       for (const s of dto.sets) {
         await tx.loggedSet.create({
           data: {
-            sessionId: session.sessionId,
+            sessionId: session.id,
             prescriptionId: s.prescriptionId ?? null,
             exerciseId: s.exerciseId,
             setNumber: s.setNumber,
@@ -131,7 +131,7 @@ export class SessionService {
           },
         });
       }
-      return session.sessionId;
+      return session.id;
     });
 
     // Build the WorkoutSession domain object cho computeSessionFeedback
@@ -177,7 +177,7 @@ export class SessionService {
 
     // cập nhật completionPct đã tính
     await this.prisma.workoutSession.update({
-      where: { sessionId },
+      where: { id: sessionId },
       data: { completionPct: feedback.completionPct },
     });
 
@@ -186,7 +186,7 @@ export class SessionService {
 
   async getSession(userId: string, sessionId: string) {
     const session = await this.prisma.workoutSession.findFirst({
-      where: { sessionId, userId },
+      where: { id: sessionId, userId },
       include: { sets: { orderBy: { setNumber: 'asc' } } },
     });
     if (!session) throw new NotFoundException('Không tìm thấy buổi tập');
@@ -226,7 +226,7 @@ export class SessionService {
         startedAt: dto.startedAt ? new Date(dto.startedAt) : new Date(),
       },
     });
-    return { sessionId: session.sessionId };
+    return { sessionId: session.id };
   }
 
   /**
@@ -300,7 +300,7 @@ export class SessionService {
     if (!session.plannedSessionId) {
       // free workout: không có plan -> không có execution item, không lỗi
       await this.prisma.workoutSession.update({
-        where: { sessionId },
+        where: { id: sessionId },
         data: { status: SessionStatus.in_progress },
       });
       return { items: [] };
@@ -360,7 +360,7 @@ export class SessionService {
         });
       }
       await tx.workoutSession.update({
-        where: { sessionId },
+        where: { id: sessionId },
         data: { status: SessionStatus.in_progress },
       });
     });
@@ -430,7 +430,7 @@ export class SessionService {
         // ép execution item -> stopped
         if (dto.executionItemId) {
           await tx.sessionExecutionItem.update({
-            where: { executionItemId: dto.executionItemId },
+            where: { id: dto.executionItemId },
             data: { status: ExecutionItemStatus.stopped },
           });
         }
@@ -461,12 +461,12 @@ export class SessionService {
         )
       ) {
         await tx.loggedSet.update({
-          where: { setId: dto.setId },
+          where: { id: dto.setId },
           data: { feedbackFlag: dto.type as FeedbackFlag },
         });
       }
 
-      return { feedbackEventId: event.feedbackEventId, actionTaken };
+      return { feedbackEventId: event.id, actionTaken };
     });
   }
 
@@ -501,11 +501,11 @@ export class SessionService {
       session.startedAt,
     );
     const exRows = await this.prisma.exercise.findMany({
-      where: { exerciseId: { in: exerciseIds } },
-      select: { exerciseId: true, exerciseType: true },
+      where: { id: { in: exerciseIds } },
+      select: { id: true, exerciseType: true },
     });
     const typeMap = new Map<string, ExType>(
-      exRows.map((r) => [r.exerciseId, r.exerciseType as ExType]),
+      exRows.map((r) => [r.id, r.exerciseType as ExType]),
     );
     const exTypeOf = (id: string): ExType => typeMap.get(id) ?? 'resistance';
 
@@ -575,7 +575,7 @@ export class SessionService {
 
     // completionPct + status
     await this.prisma.workoutSession.update({
-      where: { sessionId },
+      where: { id: sessionId },
       data: { completionPct: feedback.completionPct, status: SessionStatus.completed },
     });
 
@@ -609,7 +609,7 @@ export class SessionService {
       });
       await this.boss.enqueue(
         FOLLOWUP_DUE_QUEUE,
-        { followupId: followup.followupId },
+        { followupId: followup.id },
         { startAfter: scheduledFor },
       );
       followupScheduled = true;
@@ -622,7 +622,7 @@ export class SessionService {
 
   private toDomainSession(
     session: {
-      sessionId: string;
+      id: string; // PK Prisma; domain gọi là sessionId
       userId: string;
       plannedSessionId: string | null;
       programRevisionId: string;
@@ -631,7 +631,7 @@ export class SessionService {
       sessionRpe: number | null;
     },
     sets: {
-      setId: string;
+      id: string; // PK Prisma; domain gọi là setId
       prescriptionId: string | null;
       exerciseId: string;
       setNumber: number;
@@ -646,7 +646,7 @@ export class SessionService {
     }[],
   ): WorkoutSession {
     return {
-      sessionId: session.sessionId,
+      sessionId: session.id,
       userId: session.userId,
       plannedSessionId: session.plannedSessionId,
       programRevisionId: session.programRevisionId,
@@ -660,8 +660,8 @@ export class SessionService {
       notes: null,
       wearable: null,
       sets: sets.map((s) => ({
-        setId: s.setId,
-        sessionId: session.sessionId,
+        setId: s.id,
+        sessionId: session.id,
         prescriptionId: s.prescriptionId,
         exerciseId: s.exerciseId,
         setNumber: s.setNumber,
@@ -725,7 +725,7 @@ export class SessionService {
           sessionId: { not: excludeSessionId },
           session: { userId },
         },
-        select: { executionItemId: true },
+        select: { id: true },
       });
       if (!prior) out.push(p);
     }
@@ -734,7 +734,7 @@ export class SessionService {
 
   private async requireSession(userId: string, sessionId: string) {
     const session = await this.prisma.workoutSession.findFirst({
-      where: { sessionId, userId },
+      where: { id: sessionId, userId },
     });
     if (!session) throw new NotFoundException('Không tìm thấy buổi tập');
     return session;
@@ -767,10 +767,10 @@ export class SessionService {
     });
     const exIds = [...new Set(rx.map((r) => r.exerciseId))];
     const exRows = await this.prisma.exercise.findMany({
-      where: { exerciseId: { in: exIds } },
-      select: { exerciseId: true, movementPattern: true, contraindications: true },
+      where: { id: { in: exIds } },
+      select: { id: true, movementPattern: true, contraindications: true },
     });
-    const meta = new Map(exRows.map((e) => [e.exerciseId, e]));
+    const meta = new Map(exRows.map((e) => [e.id, e]));
     return rx.map((r) => {
       const m = meta.get(r.exerciseId);
       const contra = (m?.contraindications ?? []) as { injuryArea?: string }[];
@@ -778,7 +778,7 @@ export class SessionService {
         .map((c) => c.injuryArea)
         .filter((a): a is string => !!a);
       return {
-        prescriptionId: r.prescriptionId,
+        prescriptionId: r.id,
         exerciseId: r.exerciseId,
         movementPattern: m?.movementPattern ?? 'unknown',
         bodyAreas,
@@ -807,7 +807,7 @@ export class SessionService {
         restSec: r.restSec,
       };
       return {
-        item: itemById.get(r.prescriptionId)!,
+        item: itemById.get(r.id)!,
         order: r.order,
         rx: effectiveRx,
       };
@@ -851,7 +851,7 @@ export class SessionService {
       result.set(
         exId,
         sets.map((s) => ({
-          setId: s.setId,
+          setId: s.id,
           sessionId: s.sessionId,
           prescriptionId: s.prescriptionId,
           exerciseId: s.exerciseId,

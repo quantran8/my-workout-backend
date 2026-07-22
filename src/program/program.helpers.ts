@@ -1,6 +1,10 @@
 // program/program.helpers.ts
 // Ghép ProgramDraft (LLM, chưa id) -> Program (đủ id, type='static', rev=1) để validator kiểm.
 // Backend gán MỌI id + set static/rev — LLM không sinh (program_generation.md §Output Schema).
+//
+// LLM nói bằng SLUG ("Barbell_Squat"), DB nói bằng uuid v7. assembleProgram giữ NGUYÊN slug
+// trong Prescription.exerciseSlug để validator đối chiếu với pool, và dịch sang uuid
+// (exerciseId) qua idBySlug. Slug lạ -> exerciseId = '' và validator bắt EXERCISE_NOT_IN_POOL.
 
 import { randomUUID } from 'node:crypto';
 import { Program, PlannedSession, Prescription } from './program.types';
@@ -14,6 +18,8 @@ export function assembleProgram(
     basedOnProfileVersion: number;
     programId?: string;
     revisionId?: string;
+    /** slug -> uuid của allowedPool; thiếu map thì exerciseId để rỗng cho validator bắt. */
+    idBySlug?: Map<string, string>;
   },
 ): Program {
   const programId = opts.programId ?? randomUUID();
@@ -23,7 +29,9 @@ export function assembleProgram(
     const plannedSessionId = randomUUID();
     const prescriptions: Prescription[] = s.prescriptions.map((p) => ({
       prescriptionId: randomUUID(),
-      exerciseId: p.exerciseId,
+      // LLM trả slug; giữ lại để validator/thông báo lỗi đọc được, và dịch sang uuid.
+      exerciseSlug: p.exerciseId,
+      exerciseId: opts.idBySlug?.get(p.exerciseId) ?? '',
       order: p.order,
       targetSets: p.targetSets,
       targetReps: p.targetReps ?? null,

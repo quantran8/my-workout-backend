@@ -7,7 +7,8 @@ export type ProgramStatus = 'active' | 'archived';
 // Static plan chỉ cần prescription khởi điểm; progressionRule là CODE (living plan mới dùng).
 export interface Prescription {
   prescriptionId: string;
-  exerciseId: string;        // PHẢI ∈ allowedPool (validator kiểm)
+  exerciseId: string; // uuid v7 của Exercise — khoá ghi DB ('' nếu slug không map được)
+  exerciseSlug: string; // slug LLM trả về; PHẢI ∈ allowedPool (validator kiểm)
   order: number;
   targetSets: number;
   targetReps?: number | [number, number] | null;   // resistance

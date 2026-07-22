@@ -1,5 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ConfigModule } from '@nestjs/config';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SupabaseService } from './supabase/supabase.service';
@@ -12,10 +14,12 @@ import { ProfileModule } from './profile/profile.module';
 import { ExerciseModule } from './exercise/exercise.module';
 import { ProgramModule } from './program/program.module';
 import { SessionModule } from './session/session.module';
+import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
 
 @Global()
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
     AuthModule,
     QueueModule,
@@ -26,7 +30,16 @@ import { SessionModule } from './session/session.module';
     SessionModule,
   ],
   controllers: [AppController],
-  providers: [AppService, SupabaseService, PrismaService, TransactionRunner],
+  providers: [
+    AppService,
+    SupabaseService,
+    PrismaService,
+    TransactionRunner,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: HttpLoggingInterceptor,
+    },
+  ],
   exports: [SupabaseService, PrismaService, TransactionRunner],
 })
 export class AppModule {}

@@ -11,7 +11,8 @@ const IMPACT_RANK: Record<string, number> = { low: 1, moderate: 2, high: 3 };
 
 // Shape tối thiểu của một exercise từ movement library (khớp §2).
 export interface Exercise {
-  exerciseId: string;
+  exerciseId: string; // uuid v7 — khoá thật, dùng cho mọi FK khi ghi DB
+  slug: string; // key người đọc được ("Barbell_Squat") — đây là thứ gửi cho LLM
   name: string;
   exerciseType: 'resistance' | 'cardio' | 'mobility';
   equipment: string[];
@@ -39,7 +40,7 @@ export interface GuardrailResult {
   flags: RedFlag[];
   policy: GuardrailPolicy;
   allowedPool: Exercise[];
-  excluded: { exerciseId: string; name: string; reasons: string[] }[];
+  excluded: { exerciseId: string; slug: string; name: string; reasons: string[] }[];
   userMessages: string[];
   safetyNote: string;
 }
@@ -112,7 +113,8 @@ export function buildGuardrail(
         reasons.push(`impact>${adaptation!.impactCap}`);
       }
     }
-    if (reasons.length) excluded.push({ exerciseId: ex.exerciseId, name: ex.name, reasons });
+    if (reasons.length)
+      excluded.push({ exerciseId: ex.exerciseId, slug: ex.slug, name: ex.name, reasons });
     else allowedPool.push(ex);
   }
 

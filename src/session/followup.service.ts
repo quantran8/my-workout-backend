@@ -56,7 +56,7 @@ export class FollowupService implements OnModuleInit {
         for (const job of jobs) {
           await this.prisma.postSessionFollowup.updateMany({
             where: {
-              followupId: job.data.followupId,
+              id: job.data.followupId,
               status: FollowupStatus.scheduled,
             },
             data: { status: FollowupStatus.sent },
@@ -69,7 +69,7 @@ export class FollowupService implements OnModuleInit {
   /** POST /followup/:id/complete — user trả lời phản ứng ngày sau. */
   async complete(userId: string, followupId: string, dto: CompleteFollowupDto) {
     const followup = await this.prisma.postSessionFollowup.findFirst({
-      where: { followupId, userId },
+      where: { id: followupId, userId },
     });
     if (!followup) throw new NotFoundException('Không tìm thấy follow-up');
 
@@ -120,7 +120,7 @@ export class FollowupService implements OnModuleInit {
 
     await this.prisma.$transaction(async (tx) => {
       await tx.postSessionFollowup.update({
-        where: { followupId },
+        where: { id: followupId },
         data: {
           status: FollowupStatus.completed,
           completedAt: new Date(),

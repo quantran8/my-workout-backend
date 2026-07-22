@@ -16,7 +16,8 @@ export class ExerciseService {
     const rows = await this.prisma.exercise.findMany({
       where: { reviewedBy: null },
       select: {
-        exerciseId: true,
+        id: true,
+        slug: true,
         name: true,
         movementPattern: true,
         goalFit: true,
@@ -32,18 +33,18 @@ export class ExerciseService {
         ? b.contraindications.length
         : 0;
       if (ac !== bc) return bc - ac; // contraindication candidates first
-      return a.exerciseId.localeCompare(b.exerciseId);
+      return a.slug.localeCompare(b.slug);
     });
   }
 
   /** A PT confirms the heuristic fields and marks the exercise reviewed. */
-  async review(exerciseId: string, dto: ReviewExerciseDto) {
+  async review(id: string, dto: ReviewExerciseDto) {
     const existing = await this.prisma.exercise.findUnique({
-      where: { exerciseId },
-      select: { exerciseId: true },
+      where: { id },
+      select: { id: true },
     });
     if (!existing) {
-      throw new NotFoundException(`Exercise "${exerciseId}" not found`);
+      throw new NotFoundException(`Exercise "${id}" not found`);
     }
 
     const data: Prisma.ExerciseUpdateInput = {
@@ -58,6 +59,6 @@ export class ExerciseService {
       data.contraindications =
         dto.contraindications as unknown as Prisma.InputJsonValue;
 
-    return this.prisma.exercise.update({ where: { exerciseId }, data });
+    return this.prisma.exercise.update({ where: { id }, data });
   }
 }

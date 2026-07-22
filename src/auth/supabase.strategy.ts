@@ -1,12 +1,7 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy } from 'passport-strategy';
-import {
-  createRemoteJWKSet,
-  jwtVerify,
-  type JWTPayload,
-  type JWTVerifyGetKey,
-} from 'jose';
+import { TokenVerifierService } from './token-verifier.service';
 
 /**
  * Custom Passport strategy for Supabase JWT auth.
@@ -16,20 +11,9 @@ import {
  * On success, req.user is the decoded JWT payload ({ sub, email, ... }).
  */
 @Injectable()
-export class SupabaseStrategy
-  extends PassportStrategy(Strategy, 'supabase')
-  implements OnModuleInit
-{
-  private jwks!: JWTVerifyGetKey;
-
-  onModuleInit() {
-    const supabaseUrl = process.env.SUPABASE_URL;
-    if (!supabaseUrl) {
-      throw new Error('SUPABASE_URL must be provided in environment variables');
-    }
-    this.jwks = createRemoteJWKSet(
-      new URL(`${supabaseUrl}/auth/v1/.well-known/jwks.json`),
-    );
+export class SupabaseStrategy extends PassportStrategy(Strategy, 'supabase') {
+  constructor(private readonly tokenVerifier: TokenVerifierService) {
+    super();
   }
 
   validate(): Promise<unknown> {
@@ -45,13 +29,15 @@ export class SupabaseStrategy
       this.fail({ message: 'Missing authorization' }, 401);
       return;
     }
-    jwtVerify(token, this.jwks, { audience: 'authenticated' })
-      .then(({ payload }: { payload: JWTPayload }) => {
-        this.success(payload, {});
+    this.tokenVerifier
+      .verify(token)
+      .then((user) => {
+        this.success(user, {});
       })
-      .catch((err: Error) => {
-        this.fail({ message: err?.message ?? 'Invalid token' }, 401);
+      .catch((error: unknown) => {
+        const message =
+          error instanceof Error ? error.message : 'Invalid token';
+        this.fail({ message }, 401);
       });
   }
 }
-

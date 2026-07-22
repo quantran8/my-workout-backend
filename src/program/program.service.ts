@@ -3,6 +3,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
@@ -53,7 +54,10 @@ export class ProgramService {
       targetGoals,
       schedule,
     );
-    const slim = slimPool(selected.length ? selected : guard.allowedPool);
+    const poolForLlm = selected.length ? selected : guard.allowedPool;
+    const slim = slimPool(poolForLlm);
+    // LLM chọn bài theo slug -> cần map ngược sang uuid v7 trước khi ghi DB.
+    const idBySlug = new Map(poolForLlm.map((e) => [e.slug, e.exerciseId]));
 
     let lastViolations: Violation[] = [];
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -67,6 +71,7 @@ export class ProgramService {
       const program = assembleProgram(draft, {
         userId,
         basedOnProfileVersion,
+        idBySlug,
       });
       const { ok, violations } = validateProgram(program, guard, {
         expectedDaysPerWeek: schedule.daysPerWeek,
@@ -135,44 +140,47 @@ export class ProgramService {
     await this.prisma.$transaction(async (tx) => {
       const rev = await tx.programRevision.create({
         data: {
-          programId: program.programId,
+          programId: program.id,
           revisionNumber: nextNumber,
           adjustmentReason: `safety: ${input.reason}`,
         },
       });
       // v1: sao chép nguyên các session của revision gần nhất (caps thực thi ở execution snapshot).
-      for (const s of latest?.sessions ?? []) {
-        const ps = await tx.plannedSession.create({
-          data: {
-            revisionId: rev.revisionId,
-            weekNumber: s.weekNumber,
-            dayNumber: s.dayNumber,
-            focus: s.focus,
-          },
-        });
-        for (const p of s.prescriptions) {
-          await tx.prescription.create({
-            data: {
-              plannedSessionId: ps.plannedSessionId,
-              exerciseId: p.exerciseId,
-              order: p.order,
-              targetSets: p.targetSets,
-              targetReps: (p.targetReps ??
-                undefined) as unknown as Prisma.InputJsonValue,
-              targetWeightKg: p.targetWeightKg,
-              targetDurationSec: p.targetDurationSec,
-              targetDistanceM: p.targetDistanceM,
-              targetRpe: p.targetRpe,
-              restSec: p.restSec,
-            },
-          });
-        }
-      }
+      const copies = (latest?.sessions ?? []).map((s) => ({
+        newId: randomUUID(),
+        source: s,
+      }));
+      await tx.plannedSession.createMany({
+        data: copies.map(({ newId, source }) => ({
+          id: newId,
+          revisionId: rev.id,
+          weekNumber: source.weekNumber,
+          dayNumber: source.dayNumber,
+          focus: source.focus,
+        })),
+      });
+      await tx.prescription.createMany({
+        data: copies.flatMap(({ newId, source }) =>
+          source.prescriptions.map((p) => ({
+            plannedSessionId: newId,
+            exerciseId: p.exerciseId,
+            order: p.order,
+            targetSets: p.targetSets,
+            targetReps: (p.targetReps ??
+              undefined) as unknown as Prisma.InputJsonValue,
+            targetWeightKg: p.targetWeightKg,
+            targetDurationSec: p.targetDurationSec,
+            targetDistanceM: p.targetDistanceM,
+            targetRpe: p.targetRpe,
+            restSec: p.restSec,
+          })),
+        ),
+      });
       await tx.program.update({
-        where: { programId: program.programId },
+        where: { id: program.id },
         data: { currentRevision: nextNumber },
       });
-    });
+    }, { maxWait: 10_000, timeout: 60_000 });
     return true;
   }
 
@@ -197,7 +205,7 @@ export class ProgramService {
       });
       await tx.program.create({
         data: {
-          programId: program.programId,
+          id: program.programId,
           userId: program.userId,
           basedOnProfileVersion: program.basedOnProfileVersion,
           type: 'static',
@@ -210,41 +218,39 @@ export class ProgramService {
       });
       await tx.programRevision.create({
         data: {
-          revisionId: rev.revisionId,
+          id: rev.revisionId,
           programId: program.programId,
           revisionNumber: 1,
           adjustmentReason: null,
         },
       });
-      for (const s of rev.sessions) {
-        await tx.plannedSession.create({
-          data: {
+      await tx.plannedSession.createMany({
+        data: rev.sessions.map((s) => ({
+          id: s.plannedSessionId,
+          revisionId: rev.revisionId,
+          weekNumber: s.weekNumber,
+          dayNumber: s.dayNumber,
+          focus: s.focus,
+        })),
+      });
+      await tx.prescription.createMany({
+        data: rev.sessions.flatMap((s) =>
+          s.prescriptions.map((p) => ({
+            id: p.prescriptionId,
             plannedSessionId: s.plannedSessionId,
-            revisionId: rev.revisionId,
-            weekNumber: s.weekNumber,
-            dayNumber: s.dayNumber,
-            focus: s.focus,
-          },
-        });
-        for (const p of s.prescriptions) {
-          await tx.prescription.create({
-            data: {
-              prescriptionId: p.prescriptionId,
-              plannedSessionId: s.plannedSessionId,
-              exerciseId: p.exerciseId,
-              order: p.order,
-              targetSets: p.targetSets,
-              targetReps: (p.targetReps ??
-                undefined) as unknown as Prisma.InputJsonValue,
-              targetWeightKg: p.targetWeightKg ?? null,
-              targetDurationSec: p.targetDurationSec ?? null,
-              targetDistanceM: p.targetDistanceM ?? null,
-              targetRpe: p.targetRpe ?? null,
-              restSec: p.restSec,
-            },
-          });
-        }
-      }
-    });
+            exerciseId: p.exerciseId,
+            order: p.order,
+            targetSets: p.targetSets,
+            targetReps: (p.targetReps ??
+              undefined) as unknown as Prisma.InputJsonValue,
+            targetWeightKg: p.targetWeightKg ?? null,
+            targetDurationSec: p.targetDurationSec ?? null,
+            targetDistanceM: p.targetDistanceM ?? null,
+            targetRpe: p.targetRpe ?? null,
+            restSec: p.restSec,
+          })),
+        ),
+      });
+    }, { maxWait: 10_000, timeout: 60_000 });
   }
 }

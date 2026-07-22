@@ -2,10 +2,12 @@ import { slimPool, buildSlots } from '../pool-retrieval';
 import { Exercise } from '../../profile/guardrail';
 
 // Fixture: camelCase Exercise rows (shape guardrail/validator use), with extra fields
-// (cues/media) that slimPool must drop.
+// (cues/media) that slimPool must drop. exerciseId là uuid v7 (khoá DB), slug là key
+// người đọc được — slimPool PHẢI gửi slug cho LLM, không phải uuid.
 const pool: Exercise[] = [
   {
-    exerciseId: 'goblet_squat',
+    exerciseId: '01919f00-0000-7000-8000-000000000001',
+    slug: 'goblet_squat',
     name: 'Goblet Squat',
     exerciseType: 'resistance',
     equipment: ['dumbbell'],
@@ -22,7 +24,8 @@ const pool: Exercise[] = [
     source: { repo: 'x' },
   } as unknown as Exercise,
   {
-    exerciseId: 'romanian_deadlift',
+    exerciseId: '01919f00-0000-7000-8000-000000000002',
+    slug: 'romanian_deadlift',
     name: 'Romanian Deadlift',
     exerciseType: 'resistance',
     equipment: ['dumbbell'],
@@ -34,7 +37,8 @@ const pool: Exercise[] = [
     defaultRx: { sets: 3, rep_range: [6, 10], rest_sec: 120 },
   } as unknown as Exercise,
   {
-    exerciseId: 'pushup',
+    exerciseId: '01919f00-0000-7000-8000-000000000003',
+    slug: 'pushup',
     name: 'Push-up',
     exerciseType: 'resistance',
     equipment: ['bodyweight'],
@@ -108,7 +112,7 @@ describe('buildSlots', () => {
       minutesPerSession: 45,
     });
     // pushup is the only endurance-fit exercise; it should be selected
-    expect(selected.map((e) => e.exerciseId)).toContain('pushup');
+    expect(selected.map((e) => e.slug)).toContain('pushup');
   });
 
   it('returns empty for an empty pool', () => {

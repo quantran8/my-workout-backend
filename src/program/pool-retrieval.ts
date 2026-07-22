@@ -42,7 +42,7 @@ function asStrArr(v: unknown): string[] {
  */
 export function slimPool(exercises: Exercise[]): SlimExercise[] {
   return exercises.map((e) => ({
-    exercise_id: e.exerciseId,
+    exercise_id: e.slug, // LLM chọn bài theo slug người đọc được, KHÔNG phải uuid
     name: e.name,
     movement_pattern: (ex(e, 'movementPattern') as string | undefined) ?? null,
     primary_muscles: asStrArr(ex(e, 'primaryMuscles')),
