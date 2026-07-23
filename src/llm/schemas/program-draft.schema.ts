@@ -42,6 +42,8 @@ export const PROGRAM_DRAFT_SCHEMA = {
             items: {
               type: 'object',
               additionalProperties: false,
+              // strict mode: mọi property phải có trong `required`; field không
+              // áp dụng thì LLM trả null.
               required: [
                 'exerciseId',
                 'order',
@@ -50,8 +52,10 @@ export const PROGRAM_DRAFT_SCHEMA = {
                 'targetWeightKg',
                 'targetDurationSec',
                 'targetDistanceM',
+                'targetPaceSecPerKm',
                 'targetRpe',
                 'restSec',
+                'blocks',
               ],
               properties: {
                 exerciseId: { type: 'string' },
@@ -72,8 +76,49 @@ export const PROGRAM_DRAFT_SCHEMA = {
                 targetWeightKg: { type: ['number', 'null'] },
                 targetDurationSec: { type: ['integer', 'null'] },
                 targetDistanceM: { type: ['integer', 'null'] },
+                targetPaceSecPerKm: { type: ['number', 'null'] },
                 targetRpe: { type: ['integer', 'null'] },
                 restSec: { type: 'integer' },
+                /**
+                 * null = bài đơn giản. Mảng = interval/circuit (CHỈ cho bài
+                 * cardio) — mỗi vòng lặp trải phẳng thành block riêng, không có
+                 * field "repeat", để client chạy tuần tự theo `order`.
+                 */
+                blocks: {
+                  anyOf: [
+                    {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: [
+                          'order',
+                          'phase',
+                          'durationSec',
+                          'distanceM',
+                          'targetRpeMin',
+                          'targetRpeMax',
+                          'targetPaceSecPerKm',
+                          'instruction',
+                        ],
+                        properties: {
+                          order: { type: 'integer' },
+                          phase: {
+                            type: 'string',
+                            enum: ['warmup', 'work', 'recovery', 'cooldown'],
+                          },
+                          durationSec: { type: ['integer', 'null'] },
+                          distanceM: { type: ['integer', 'null'] },
+                          targetRpeMin: { type: ['integer', 'null'] },
+                          targetRpeMax: { type: ['integer', 'null'] },
+                          targetPaceSecPerKm: { type: ['number', 'null'] },
+                          instruction: { type: 'string' },
+                        },
+                      },
+                    },
+                    { type: 'null' },
+                  ],
+                },
               },
             },
           },

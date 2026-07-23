@@ -44,6 +44,11 @@ import type { CreateSessionDto } from './dto/create-session.dto';
 import type { SubmitReadinessDto } from './dto/submit-readiness.dto';
 import type { LogSetsDto } from './dto/log-sets.dto';
 import type { RecordFeedbackDto } from './dto/record-feedback.dto';
+import type { CompleteSessionDto } from './dto/complete-session.dto';
+import {
+  EXERCISE_DETAIL_SELECT,
+  type ExerciseDetail,
+} from '../exercise/exercise.service';
 
 type ExType = 'resistance' | 'cardio' | 'mobility';
 
@@ -190,7 +195,17 @@ export class SessionService {
       include: { sets: { orderBy: { setNumber: 'asc' } } },
     });
     if (!session) throw new NotFoundException('Không tìm thấy buổi tập');
-    return session;
+
+    // Execution items carry the exercise names the practice screen renders, so
+    // resuming a session needs them hydrated exactly like buildExecution.
+    const executionItems = await this.prisma.sessionExecutionItem.findMany({
+      where: { sessionId },
+      orderBy: { order: 'asc' },
+    });
+    return {
+      ...session,
+      executionItems: await this.hydrateExercises(executionItems),
+    };
   }
 
   async history(userId: string, from?: string, to?: string) {
@@ -224,6 +239,14 @@ export class SessionService {
         programRevisionId: dto.programRevisionId,
         status: SessionStatus.planned,
         startedAt: dto.startedAt ? new Date(dto.startedAt) : new Date(),
+        // Omitted -> Prisma applies the column defaults (unknown / none / manual).
+        ...(dto.environment
+          ? { environment: dto.environment as Environment }
+          : {}),
+        ...(dto.distanceSource
+          ? { distanceSource: dto.distanceSource as DistanceSource }
+          : {}),
+        ...(dto.dataSource ? { dataSource: dto.dataSource as DataSource } : {}),
       },
     });
     return { sessionId: session.id };
@@ -306,6 +329,17 @@ export class SessionService {
       return { items: [] };
     }
 
+    // §5.3 — the snapshot is immutable once built. A client resuming a session
+    // re-calls this endpoint, so return the existing items instead of writing a
+    // duplicate set.
+    const existing = await this.prisma.sessionExecutionItem.findMany({
+      where: { sessionId },
+      orderBy: { order: 'asc' },
+    });
+    if (existing.length > 0) {
+      return { items: await this.hydrateExercises(existing) };
+    }
+
     const readinessRow = await this.prisma.sessionReadiness.findUnique({
       where: { sessionId },
     });
@@ -369,7 +403,62 @@ export class SessionService {
       where: { sessionId },
       orderBy: { order: 'asc' },
     });
-    return { items, ruleVersion: snapshot.ruleVersion };
+    return {
+      items: await this.hydrateExercises(items),
+      ruleVersion: snapshot.ruleVersion,
+    };
+  }
+
+  /**
+   * Attaches the Exercise row to each execution item.
+   *
+   * Without this the client receives only `exerciseId` uuids and cannot render
+   * an exercise list at all. Resolved in one batched query rather than per item.
+   *
+   * `exercise` is null when the movement is missing or no longer reviewed; the
+   * caller shows the remaining items rather than failing the whole session.
+   */
+  private async hydrateExercises<
+    T extends { exerciseId: string; sourcePrescriptionId?: string | null },
+  >(items: T[]): Promise<(T & { exercise: ExerciseDetail | null })[]> {
+    const ids = [...new Set(items.map((item) => item.exerciseId))];
+    if (ids.length === 0) return [];
+
+    const rows = await this.prisma.exercise.findMany({
+      where: { id: { in: ids }, reviewedBy: { not: null } },
+      select: EXERCISE_DETAIL_SELECT,
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    // Interval steps live on the source prescription; a plain prescription has
+    // none and the client falls back to effectiveRx.
+    const prescriptionIds = [
+      ...new Set(
+        items
+          .map((item) => item.sourcePrescriptionId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const blockRows = prescriptionIds.length
+      ? await this.prisma.prescriptionBlock.findMany({
+          where: { prescriptionId: { in: prescriptionIds } },
+          orderBy: { order: 'asc' },
+        })
+      : [];
+    const blocksByPrescription = new Map<string, typeof blockRows>();
+    for (const block of blockRows) {
+      const list = blocksByPrescription.get(block.prescriptionId) ?? [];
+      list.push(block);
+      blocksByPrescription.set(block.prescriptionId, list);
+    }
+
+    return items.map((item) => ({
+      ...item,
+      exercise: byId.get(item.exerciseId) ?? null,
+      blocks: item.sourcePrescriptionId
+        ? (blocksByPrescription.get(item.sourcePrescriptionId) ?? [])
+        : [],
+    }));
   }
 
   /** POST /session/:id/sets — log LoggedSet[] (append-able). */
@@ -478,12 +567,27 @@ export class SessionService {
   async completeSession(
     userId: string,
     sessionId: string,
+    dto?: CompleteSessionDto,
   ): Promise<{
     feedback: SessionFeedback;
     tolerance: SessionToleranceResult;
     followupScheduled: boolean;
   }> {
     const session = await this.requireSession(userId, sessionId);
+
+    // Cảm nhận cả buổi chỉ thu được ở màn kết thúc — ghi trước khi tính feedback.
+    if (dto?.sessionRpe != null || dto?.energyAfter || dto?.notes) {
+      await this.prisma.workoutSession.update({
+        where: { id: sessionId },
+        data: {
+          ...(dto.sessionRpe != null ? { sessionRpe: dto.sessionRpe } : {}),
+          ...(dto.energyAfter
+            ? { energyAfter: dto.energyAfter as EnergyLevel }
+            : {}),
+          ...(dto.notes ? { notes: dto.notes } : {}),
+        },
+      });
+    }
 
     const sets = await this.prisma.loggedSet.findMany({
       where: { sessionId },

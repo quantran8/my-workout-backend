@@ -14,7 +14,10 @@ export interface Violation {
     | 'CARDIO_NOT_MINIMAL'        // goal-conflict yêu cầu cardio tối thiểu mà LLM kê nhiều
     | 'SESSION_COUNT_MISMATCH'    // số buổi khác lịch user
     | 'PHASE_PLAN_MISSING'        // phải phân giai đoạn mà không có
-    | 'EMPTY_SESSION';
+    | 'EMPTY_SESSION'
+    | 'BLOCKS_ON_NON_CARDIO'      // interval block gắn vào bài không phải cardio
+    | 'BLOCK_ORDER_INVALID'       // order không liên tục từ 1
+    | 'BLOCK_NO_DIMENSION';       // block không có cả durationSec lẫn distanceM
   detail: string;
   where?: string;
 }
@@ -48,6 +51,47 @@ export function validateProgram(
           detail: `bài "${p.exerciseSlug}" không nằm trong allowedPool (bị guardrail loại hoặc LLM bịa)`,
           where: `${s.plannedSessionId}#${p.order}`,
         });
+      }
+    }
+  }
+
+  // 1b) Interval blocks: chỉ cho cardio, order liên tục, mỗi chặng phải đo được
+  for (const s of sessions) {
+    for (const p of s.prescriptions) {
+      const blocks = p.blocks;
+      if (!blocks || blocks.length === 0) continue;
+
+      const where = `${s.plannedSessionId}#${p.order}`;
+      const ex = poolBySlug.get(p.exerciseSlug);
+      // Bài ngoài pool đã bị bắt ở (1); ở đây chỉ chặn khi biết chắc KHÔNG phải cardio.
+      if (ex && ex.exerciseType !== 'cardio') {
+        violations.push({
+          code: 'BLOCKS_ON_NON_CARDIO',
+          detail: `bài "${p.exerciseSlug}" là ${ex.exerciseType} nhưng có interval blocks`,
+          where,
+        });
+      }
+
+      // Client chạy tuần tự theo order -> phải là 1..n, không trùng, không hụt.
+      const orders = blocks.map((b) => b.order).sort((a, b) => a - b);
+      const contiguous = orders.every((o, i) => o === i + 1);
+      if (!contiguous) {
+        violations.push({
+          code: 'BLOCK_ORDER_INVALID',
+          detail: `order các chặng phải liên tục 1..${blocks.length}, nhận [${orders.join(', ')}]`,
+          where,
+        });
+      }
+
+      for (const b of blocks) {
+        // Không có thời lượng lẫn quãng đường thì client không biết khi nào chặng kết thúc.
+        if ((b.durationSec ?? 0) <= 0 && (b.distanceM ?? 0) <= 0) {
+          violations.push({
+            code: 'BLOCK_NO_DIMENSION',
+            detail: `chặng ${b.order} (${b.phase}) không có durationSec lẫn distanceM`,
+            where,
+          });
+        }
       }
     }
   }

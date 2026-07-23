@@ -1,5 +1,18 @@
 import type { Profile } from '../profile/profile.types';
 import type { GuardrailPolicy } from '../profile/guardrail';
+import type { BlockPhase } from '../program/program.types';
+
+/** Một chặng interval do LLM sinh (chưa chuẩn hóa order). */
+export interface DraftBlock {
+  order: number;
+  phase: BlockPhase;
+  durationSec?: number | null;
+  distanceM?: number | null;
+  targetRpeMin?: number | null;
+  targetRpeMax?: number | null;
+  targetPaceSecPerKm?: number | null;
+  instruction: string;
+}
 
 /** Một prescription do LLM sinh (chưa có id). */
 export interface DraftPrescription {
@@ -10,8 +23,11 @@ export interface DraftPrescription {
   targetWeightKg?: number | null;
   targetDurationSec?: number | null;
   targetDistanceM?: number | null;
+  targetPaceSecPerKm?: number | null;
   targetRpe?: number | null;
   restSec: number;
+  /** null = bài đơn giản; mảng = interval/circuit (chỉ bài cardio). */
+  blocks?: DraftBlock[] | null;
 }
 
 export interface DraftSession {

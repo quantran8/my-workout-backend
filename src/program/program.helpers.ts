@@ -38,8 +38,23 @@ export function assembleProgram(
       targetWeightKg: p.targetWeightKg ?? null,
       targetDurationSec: p.targetDurationSec ?? null,
       targetDistanceM: p.targetDistanceM ?? null,
+      targetPaceSecPerKm: p.targetPaceSecPerKm ?? null,
       targetRpe: p.targetRpe ?? null,
       restSec: p.restSec,
+      // Bài đơn giản -> null. Có blocks -> chuẩn hóa order về 1..n theo thứ tự
+      // LLM trả, để validator và client không phụ thuộc vào việc LLM đánh số đúng.
+      blocks: p.blocks?.length
+        ? p.blocks.map((b, index) => ({
+            order: index + 1,
+            phase: b.phase,
+            durationSec: b.durationSec ?? null,
+            distanceM: b.distanceM ?? null,
+            targetRpeMin: b.targetRpeMin ?? null,
+            targetRpeMax: b.targetRpeMax ?? null,
+            targetPaceSecPerKm: b.targetPaceSecPerKm ?? null,
+            instruction: b.instruction,
+          }))
+        : null,
     }));
     return {
       plannedSessionId,

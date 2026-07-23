@@ -16,6 +16,7 @@ import { CreateSessionDto } from './dto/create-session.dto';
 import { SubmitReadinessDto } from './dto/submit-readiness.dto';
 import { LogSetsDto } from './dto/log-sets.dto';
 import { RecordFeedbackDto } from './dto/record-feedback.dto';
+import { CompleteSessionDto } from './dto/complete-session.dto';
 
 type Req = { user?: { id: string } };
 
@@ -73,8 +74,12 @@ export class SessionController {
 
   /** POST /session/:id/complete — kết buổi: feedback + tolerance + schedule follow-up. */
   @Post(':id/complete')
-  complete(@Request() req: Req, @Param('id') id: string) {
-    return this.sessionService.completeSession(getUserId(req), id);
+  complete(
+    @Request() req: Req,
+    @Param('id') id: string,
+    @Body() body?: CompleteSessionDto,
+  ) {
+    return this.sessionService.completeSession(getUserId(req), id, body);
   }
 
   @Get('history')

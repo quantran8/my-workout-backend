@@ -170,10 +170,10 @@ model PlannedSession {
 }
 
 model Prescription {
-  prescriptionId     String                 @id @default(uuid())
-  plannedSessionId   String
-  plannedSession     PlannedSession         @relation(fields: [plannedSessionId], references: [plannedSessionId], onDelete: Cascade)
-  exerciseId         String // -> Exercise (ràng buộc mềm ở app)
+  id                 String                 @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  plannedSessionId   String                 @db.Uuid
+  plannedSession     PlannedSession         @relation(fields: [plannedSessionId], references: [id], onDelete: Cascade)
+  exerciseId         String                 @db.Uuid // -> Exercise (ràng buộc mềm ở app)
   order              Int
   targetSets         Int
   targetReps         Json? // int | [min,max]
@@ -191,9 +191,9 @@ model Prescription {
 
 // Một chặng trong bài có cấu trúc (interval/circuit): warmup -> work -> recovery -> cooldown.
 model PrescriptionBlock {
-  blockId            String            @id @default(uuid())
-  prescriptionId     String
-  prescription       Prescription      @relation(fields: [prescriptionId], references: [prescriptionId], onDelete: Cascade)
+  id                 String            @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  prescriptionId     String            @db.Uuid
+  prescription       Prescription      @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
   order              Int
   phase              WorkoutBlockPhase
   durationSec        Int?

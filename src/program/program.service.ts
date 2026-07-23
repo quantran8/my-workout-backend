@@ -4,7 +4,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { Prisma } from '@prisma/client';
+import { Prisma, WorkoutBlockPhase } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { ProfileService } from '../profile/profile.service';
@@ -101,7 +101,14 @@ export class ProgramService {
           include: {
             sessions: {
               orderBy: [{ weekNumber: 'asc' }, { dayNumber: 'asc' }],
-              include: { prescriptions: { orderBy: { order: 'asc' } } },
+              include: {
+                prescriptions: {
+                  orderBy: { order: 'asc' },
+                  // Interval steps the cardio runner walks through; empty for
+                  // a simple prescription.
+                  include: { blocks: { orderBy: { order: 'asc' } } },
+                },
+              },
             },
           },
         },
@@ -246,11 +253,33 @@ export class ProgramService {
             targetWeightKg: p.targetWeightKg ?? null,
             targetDurationSec: p.targetDurationSec ?? null,
             targetDistanceM: p.targetDistanceM ?? null,
+            targetPaceSecPerKm: p.targetPaceSecPerKm ?? null,
             targetRpe: p.targetRpe ?? null,
             restSec: p.restSec,
           })),
         ),
       });
+
+      // Interval blocks là bảng con nên phải ghi sau prescription (FK), vẫn
+      // trong cùng transaction. Bài đơn giản không có block -> bỏ qua.
+      const blocks = rev.sessions.flatMap((s) =>
+        s.prescriptions.flatMap((p) =>
+          (p.blocks ?? []).map((b) => ({
+            prescriptionId: p.prescriptionId,
+            order: b.order,
+            phase: b.phase as WorkoutBlockPhase,
+            durationSec: b.durationSec ?? null,
+            distanceM: b.distanceM ?? null,
+            targetRpeMin: b.targetRpeMin ?? null,
+            targetRpeMax: b.targetRpeMax ?? null,
+            targetPaceSecPerKm: b.targetPaceSecPerKm ?? null,
+            instruction: b.instruction,
+          })),
+        ),
+      );
+      if (blocks.length) {
+        await tx.prescriptionBlock.createMany({ data: blocks });
+      }
     }, { maxWait: 10_000, timeout: 60_000 });
   }
 }

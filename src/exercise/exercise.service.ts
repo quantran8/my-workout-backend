@@ -3,9 +3,61 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReviewExerciseDto } from './dto/review-exercise.dto';
 
+/**
+ * Fields the client needs to render an exercise: the name and target muscles for
+ * a list row, plus instructions/media for the guide sheet. Shared with the
+ * session execution join so both surfaces return the identical shape.
+ */
+export const EXERCISE_DETAIL_SELECT = {
+  id: true,
+  slug: true,
+  name: true,
+  exerciseType: true,
+  primaryMuscles: true,
+  secondaryMuscles: true,
+  equipment: true,
+  difficulty: true,
+  isCompound: true,
+  isUnilateral: true,
+  instructions: true,
+  media: true,
+  movementPattern: true,
+  contentMode: true,
+  defaultRx: true,
+} as const;
+
+export type ExerciseDetail = Prisma.ExerciseGetPayload<{
+  select: typeof EXERCISE_DETAIL_SELECT;
+}>;
+
 @Injectable()
 export class ExerciseService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Batch read for the client. Only reviewed exercises are visible — the same
+   * production-pool condition `ProfileService.buildGuardrail` applies, so the
+   * app can never surface a movement a PT has not signed off.
+   *
+   * Batched by design: a session has ~6 exercises and the practice screen would
+   * otherwise issue one request per row.
+   */
+  async findByIds(ids: string[]): Promise<ExerciseDetail[]> {
+    if (ids.length === 0) return [];
+    return this.prisma.exercise.findMany({
+      where: { id: { in: ids }, reviewedBy: { not: null } },
+      select: EXERCISE_DETAIL_SELECT,
+    });
+  }
+
+  /** Same contract as [findByIds], keyed by the LLM-facing slug. */
+  async findBySlugs(slugs: string[]): Promise<ExerciseDetail[]> {
+    if (slugs.length === 0) return [];
+    return this.prisma.exercise.findMany({
+      where: { slug: { in: slugs }, reviewedBy: { not: null } },
+      select: EXERCISE_DETAIL_SELECT,
+    });
+  }
 
   /**
    * Review queue: unreviewed exercises, ordered so ones WITH contraindication candidates

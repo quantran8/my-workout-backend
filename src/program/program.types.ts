@@ -4,6 +4,26 @@
 export type ProgramType = 'static' | 'living';
 export type ProgramStatus = 'active' | 'archived';
 
+// Giai đoạn của một chặng trong bài có cấu trúc — khớp enum WorkoutBlockPhase.
+export type BlockPhase = 'warmup' | 'work' | 'recovery' | 'cooldown';
+
+/**
+ * Một chặng của bài cardio có cấu trúc (interval/circuit).
+ * Ví dụ: khởi động 5' -> [chạy nhanh 3' -> hồi 2'] × 3 -> thả lỏng 10'.
+ * Mỗi vòng lặp được LLM trải phẳng thành các block riêng (không có field "repeat"),
+ * để client chỉ cần chạy tuần tự theo `order`.
+ */
+export interface PrescriptionBlock {
+  order: number;
+  phase: BlockPhase;
+  durationSec?: number | null;
+  distanceM?: number | null;
+  targetRpeMin?: number | null;
+  targetRpeMax?: number | null;
+  targetPaceSecPerKm?: number | null;
+  instruction: string; // câu hướng dẫn ngắn hiển thị trên màn chạy
+}
+
 // Static plan chỉ cần prescription khởi điểm; progressionRule là CODE (living plan mới dùng).
 export interface Prescription {
   prescriptionId: string;
@@ -15,8 +35,15 @@ export interface Prescription {
   targetWeightKg?: number | null;
   targetDurationSec?: number | null;                // cardio/mobility
   targetDistanceM?: number | null;                  // cardio
+  targetPaceSecPerKm?: number | null;               // cardio — đối chiếu actualPaceSecPerKm
   targetRpe?: number | null;
   restSec: number;
+  /**
+   * Rỗng/absent = bài đơn giản, đọc target* ở trên.
+   * Có blocks = interval/circuit, client chạy theo từng chặng.
+   * CHỈ hợp lệ với exerciseType === 'cardio' (validator kiểm).
+   */
+  blocks?: PrescriptionBlock[] | null;
 }
 
 export interface PlannedSession {

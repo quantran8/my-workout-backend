@@ -51,6 +51,10 @@ const guard: GuardrailResult = {
     maxWeeklySetsPerMuscle: null,
     blockedInjuryAreas: [],
     goalPhasePriority: null,
+    // null = không có adaptation phase active (mặc định của buildGuardrail).
+    adaptationVolumeCapPct: null,
+    adaptationDifficultyCap: null,
+    adaptationImpactCap: null,
   },
   allowedPool: pool,
   excluded: [],
