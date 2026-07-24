@@ -17,10 +17,17 @@ export interface Violation {
     | 'EMPTY_SESSION'
     | 'BLOCKS_ON_NON_CARDIO'      // interval block gắn vào bài không phải cardio
     | 'BLOCK_ORDER_INVALID'       // order không liên tục từ 1
-    | 'BLOCK_NO_DIMENSION';       // block không có cả durationSec lẫn distanceM
+    | 'BLOCK_NO_DIMENSION'        // block không có cả durationSec lẫn distanceM
+    | 'DURATION_OUT_OF_RANGE'     // durationWeeks ngoài [MIN,MAX]
+    | 'WEEK_COVERAGE_MISMATCH';   // sessions không phủ đúng 1..durationWeeks
   detail: string;
   where?: string;
 }
+
+// Chương trình static phải dài ít nhất MIN và không quá MAX tuần. LLM chọn trong khoảng này;
+// ngoài khoảng -> re-prompt (không tự sửa, theo PROGRAM-2).
+export const MIN_PROGRAM_WEEKS = 2;
+export const MAX_PROGRAM_WEEKS = 24;
 
 export interface ValidationResult {
   ok: boolean;
@@ -38,6 +45,27 @@ export function validateProgram(
   // Key theo SLUG: đó là thứ LLM trả về, và uuid chỉ được gán sau khi map thành công.
   const poolBySlug = new Map<string, Exercise>(guard.allowedPool.map((e) => [e.slug, e]));
   const sessions = program.revision.sessions;
+
+  // 0) Độ dài chương trình trong khoảng cho phép, và sessions phủ ĐÚNG mọi tuần 1..durationWeeks.
+  //    Thiếu tuần -> user có ngày không có bài; thừa tuần -> lịch dương lệch với thực tế.
+  const weeks = program.durationWeeks;
+  if (weeks < MIN_PROGRAM_WEEKS || weeks > MAX_PROGRAM_WEEKS) {
+    violations.push({
+      code: 'DURATION_OUT_OF_RANGE',
+      detail: `durationWeeks=${weeks} ngoài khoảng [${MIN_PROGRAM_WEEKS}, ${MAX_PROGRAM_WEEKS}]`,
+    });
+  } else {
+    const present = new Set(sessions.map((s) => s.weekNumber));
+    const missing: number[] = [];
+    for (let w = 1; w <= weeks; w++) if (!present.has(w)) missing.push(w);
+    const extra = [...present].filter((w) => w < 1 || w > weeks);
+    if (missing.length || extra.length) {
+      violations.push({
+        code: 'WEEK_COVERAGE_MISMATCH',
+        detail: `sessions phải phủ tuần 1..${weeks}. Thiếu [${missing.join(', ')}], thừa [${extra.join(', ')}]`,
+      });
+    }
+  }
 
   // 1) Mọi bài PHẢI ∈ pool
   for (const s of sessions) {

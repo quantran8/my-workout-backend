@@ -39,12 +39,25 @@ export interface DashboardRecentSession {
   completedAt: string;
 }
 
+/**
+ * Whole-program progress: how many planned sessions the user has completed out of
+ * the program's total (durationWeeks × training-days-per-week). Distinct from
+ * `due`/`adherence` (a reach-based window) — this is the absolute "X of M" the plan
+ * spans end to end. `total` is 0 when there is no active program.
+ */
+export interface DashboardProgramProgress {
+  completed: number;
+  total: number;
+}
+
 export interface DashboardResponse {
   sessionLog: {
     days: DashboardDay[];
     /** Distinct comparable completed sessions; gates the Progress card client-side. */
     baselineSessions: number;
   };
+  /** "X of M sessions in the whole program" — see DASHBOARD-7. */
+  programProgress: DashboardProgramProgress;
   /** Consecutive calendar days with a completed session, counting back from today. */
   streak: number;
   /** completed ÷ due within the window, 0..1. Empty window → 1. */

@@ -6,9 +6,12 @@
 export const PROGRAM_DRAFT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['goalSummary', 'phasePlan', 'sessions'],
+  required: ['goalSummary', 'durationWeeks', 'phasePlan', 'sessions'],
   properties: {
     goalSummary: { type: 'string' },
+    // Tổng số tuần chương trình kéo dài (vd 12 = 3 tháng). Validator kẹp [2,24].
+    // sessions phải phủ đúng 1..durationWeeks, mỗi tuần đủ số buổi theo lịch.
+    durationWeeks: { type: 'integer' },
     phasePlan: {
       type: 'array',
       items: {

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Program" ALTER COLUMN "startDate" SET DEFAULT CURRENT_TIMESTAMP;

@@ -132,6 +132,13 @@ model Program {
   currentRevision       Int               @default(1)
   goalSummary           String
   phasePlan             Json? // [{phase,weeks,focus}]
+  // §Duration+Calendar — chương trình kéo dài mấy tuần, bắt đầu ngày nào, tập những thứ nào
+  // trong tuần. trainingDays = ISO weekday 1..7 (Mon=1..Sun=7), sắp xếp tăng dần; index của
+  // nó (1-based) = PlannedSession.dayNumber. Cùng startDate + durationWeeks đủ để suy ra
+  // "hôm nay là buổi nào" mà KHÔNG cần một row lịch cho mỗi ngày.
+  durationWeeks         Int               @default(1)
+  startDate             DateTime          @default(now()) @db.Date
+  trainingDays          Int[]             @default([])
   status                ProgramStatus     @default(active)
   createdAt             DateTime          @default(now())
   revisions             ProgramRevision[]

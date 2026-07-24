@@ -10,13 +10,94 @@ import { LlmService } from '../llm/llm.service';
 import { ProfileService } from '../profile/profile.service';
 import { validateProgram, Violation } from './program-validator';
 import { buildSlots, slimPool } from './pool-retrieval';
-import { assembleProgram, scheduleFromProfile } from './program.helpers';
+import {
+  assembleProgram,
+  scheduleFromProfile,
+  trainingDaysFromProfile,
+} from './program.helpers';
 import { computeNutrition } from './nutrition';
-import type { Program } from './program.types';
+import { resolveDate, totalPlannedSessions } from './calendar';
+import type {
+  Program,
+  PlannedSession,
+  Prescription,
+  BlockPhase,
+  CurrentResponse,
+  SessionPointer,
+} from './program.types';
 import type { Profile } from '../profile/profile.types';
 import type { Exercise } from '../profile/guardrail';
 
 const MAX_ATTEMPTS = 3;
+
+/** Ngày UTC hôm nay dạng 'YYYY-MM-DD' — trùng cách calendar.ts đọc lịch (UTC-based). */
+function todayDateString(now = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+// Hàng Prescription đọc từ Prisma (kèm blocks). Không import kiểu generated -> giữ nhẹ.
+interface PrescriptionBlockRow {
+  order: number;
+  phase: string;
+  durationSec: number | null;
+  distanceM: number | null;
+  targetRpeMin: number | null;
+  targetRpeMax: number | null;
+  targetPaceSecPerKm: number | null;
+  instruction: string;
+}
+interface PrescriptionRow {
+  id: string;
+  exerciseId: string;
+  order: number;
+  targetSets: number;
+  targetReps: unknown;
+  targetWeightKg: number | null;
+  targetDurationSec: number | null;
+  targetDistanceM: number | null;
+  targetPaceSecPerKm: number | null;
+  targetRpe: number | null;
+  restSec: number;
+  blocks: PrescriptionBlockRow[];
+}
+
+/**
+ * mapPrescriptionRow: Prescription row -> shape `Prescription` của contract. Tên/slug lấy
+ * từ Exercise row đã fetch (FK mềm); thiếu -> rỗng chứ không vỡ UI. blocks rỗng -> null
+ * (bài đơn giản). Dùng chung cho /today và /active để hai endpoint không lệch shape.
+ */
+function mapPrescriptionRow(
+  p: PrescriptionRow,
+  ex?: { slug: string; name: string },
+): Prescription {
+  return {
+    prescriptionId: p.id,
+    exerciseId: p.exerciseId,
+    exerciseSlug: ex?.slug ?? '',
+    exerciseName: ex?.name ?? '',
+    order: p.order,
+    targetSets: p.targetSets,
+    targetReps: (p.targetReps as number | [number, number] | null) ?? null,
+    targetWeightKg: p.targetWeightKg ?? null,
+    targetDurationSec: p.targetDurationSec ?? null,
+    targetDistanceM: p.targetDistanceM ?? null,
+    targetPaceSecPerKm: p.targetPaceSecPerKm ?? null,
+    targetRpe: p.targetRpe ?? null,
+    restSec: p.restSec,
+    blocks: p.blocks.length
+      ? p.blocks.map((b) => ({
+          order: b.order,
+          phase: b.phase as BlockPhase,
+          durationSec: b.durationSec ?? null,
+          distanceM: b.distanceM ?? null,
+          targetRpeMin: b.targetRpeMin ?? null,
+          targetRpeMax: b.targetRpeMax ?? null,
+          targetPaceSecPerKm: b.targetPaceSecPerKm ?? null,
+          instruction: b.instruction,
+        }))
+      : null,
+  };
+}
 
 @Injectable()
 export class ProgramService {
@@ -49,6 +130,10 @@ export class ProgramService {
     }
 
     const schedule = scheduleFromProfile(profile);
+    // Lịch dương: chương trình bắt đầu HÔM NAY, tập những ISO weekday derive từ profile.
+    // Cả hai do CODE gán (không phải LLM) — dùng để suy "hôm nay là buổi nào" khi client hỏi.
+    const startDate = todayDateString();
+    const trainingDays = trainingDaysFromProfile(profile);
     const targetGoals = this.targetGoals(profile, guard.policy.goalPhasePriority);
     const selected: Exercise[] = buildSlots(
       guard.allowedPool,
@@ -76,6 +161,8 @@ export class ProgramService {
         basedOnProfileVersion,
         idBySlug,
         nameBySlug,
+        startDate,
+        trainingDays,
       });
       const { ok, violations } = validateProgram(program, guard, {
         expectedDaysPerWeek: schedule.daysPerWeek,
@@ -154,6 +241,9 @@ export class ProgramService {
       type: row.type,
       currentRevision: row.currentRevision,
       goalSummary: row.goalSummary,
+      durationWeeks: row.durationWeeks,
+      startDate: row.startDate.toISOString().slice(0, 10),
+      trainingDays: row.trainingDays,
       phasePlan: (row.phasePlan as Program['phasePlan']) ?? null,
       nutrition: computeNutrition(profile),
       status: row.status,
@@ -168,35 +258,145 @@ export class ProgramService {
           weekNumber: s.weekNumber,
           dayNumber: s.dayNumber,
           focus: s.focus,
-          prescriptions: s.prescriptions.map((p) => ({
-            prescriptionId: p.id,
-            exerciseId: p.exerciseId,
-            exerciseSlug: byId.get(p.exerciseId)?.slug ?? '',
-            exerciseName: byId.get(p.exerciseId)?.name ?? '',
-            order: p.order,
-            targetSets: p.targetSets,
-            targetReps: (p.targetReps as number | [number, number] | null) ?? null,
-            targetWeightKg: p.targetWeightKg ?? null,
-            targetDurationSec: p.targetDurationSec ?? null,
-            targetDistanceM: p.targetDistanceM ?? null,
-            targetPaceSecPerKm: p.targetPaceSecPerKm ?? null,
-            targetRpe: p.targetRpe ?? null,
-            restSec: p.restSec,
-            blocks: p.blocks.length
-              ? p.blocks.map((b) => ({
-                  order: b.order,
-                  phase: b.phase,
-                  durationSec: b.durationSec ?? null,
-                  distanceM: b.distanceM ?? null,
-                  targetRpeMin: b.targetRpeMin ?? null,
-                  targetRpeMax: b.targetRpeMax ?? null,
-                  targetPaceSecPerKm: b.targetPaceSecPerKm ?? null,
-                  instruction: b.instruction,
-                }))
-              : null,
-          })),
+          prescriptions: s.prescriptions.map((p) =>
+            mapPrescriptionRow(p, byId.get(p.exerciseId)),
+          ),
         })),
       },
+    };
+  }
+
+  /**
+   * GET /program/current — "buổi cần làm hiện tại" + tiến độ. Suy từ lịch dương
+   * (startDate + trainingDays + durationWeeks) qua calendar.ts, KHÔNG cần row lịch/ngày.
+   *
+   * status: no_program | before_start | rest | program_complete | training (kèm
+   * `session` của đúng (weekNumber, dayNumber) HÔM NAY). Luôn đính:
+   *  - `nextSession`: buổi chưa-log kế tiếp (week/day order) — ngày rest user vẫn tập được ngay;
+   *  - `progress`: "đã tập X / tổng M buổi".
+   */
+  async getCurrent(userId: string, date?: string): Promise<CurrentResponse> {
+    const day = date ?? todayDateString();
+
+    const row = await this.prisma.program.findFirst({
+      where: { userId, status: 'active' },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        durationWeeks: true,
+        startDate: true,
+        trainingDays: true,
+        revisions: {
+          orderBy: { revisionNumber: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            sessions: {
+              orderBy: [{ weekNumber: 'asc' }, { dayNumber: 'asc' }],
+              select: {
+                id: true,
+                weekNumber: true,
+                dayNumber: true,
+                focus: true,
+                _count: { select: { prescriptions: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!row) {
+      return {
+        status: 'no_program',
+        date: day,
+        nextSession: null,
+        progress: { completed: 0, total: 0 },
+      };
+    }
+
+    const calProgram = {
+      startDate: row.startDate.toISOString().slice(0, 10),
+      durationWeeks: row.durationWeeks,
+      trainingDays: row.trainingDays,
+    };
+    const total = totalPlannedSessions(calProgram);
+    const rev = row.revisions[0];
+    const revisionId = rev?.id;
+    const plannedDays = rev?.sessions ?? [];
+
+    // Tiến độ + nextSession dùng chung tập buổi đã completed (distinct planned day).
+    const completedSessions = revisionId
+      ? await this.prisma.workoutSession.findMany({
+          where: { userId, status: 'completed', plannedSessionId: { not: null } },
+          select: { plannedSessionId: true },
+        })
+      : [];
+    const completedIds = new Set(
+      completedSessions.map((s) => s.plannedSessionId).filter((id): id is string => id != null),
+    );
+    const progress = { completed: Math.min(completedIds.size, total), total };
+
+    // nextSession = planned day đầu tiên (week/day order) chưa có completed session.
+    const nextPlanned = plannedDays.find((s) => !completedIds.has(s.id));
+    const nextSession: SessionPointer | null =
+      nextPlanned && revisionId
+        ? {
+            plannedSessionId: nextPlanned.id,
+            programRevisionId: revisionId,
+            name: nextPlanned.focus,
+            exercises: nextPlanned._count.prescriptions,
+          }
+        : null;
+
+    const res = resolveDate(day, calProgram);
+    if (res.status !== 'training' || !revisionId) {
+      return {
+        status: res.status === 'training' ? 'program_complete' : res.status,
+        date: day,
+        weekNumber: null,
+        dayNumber: null,
+        programRevisionId: revisionId ?? null,
+        session: null,
+        nextSession,
+        progress,
+      };
+    }
+
+    // Ngày tập -> lấy đúng PlannedSession (weekNumber, dayNumber), hydrate như getActive.
+    const planned = await this.prisma.plannedSession.findFirst({
+      where: { revisionId, weekNumber: res.weekNumber, dayNumber: res.dayNumber },
+      include: {
+        prescriptions: {
+          orderBy: { order: 'asc' },
+          include: { blocks: { orderBy: { order: 'asc' } } },
+        },
+      },
+    });
+    if (!planned) {
+      // Lịch nói có buổi nhưng thiếu row (validator WEEK_COVERAGE_MISMATCH chặn khi lưu)
+      // -> coi như nghỉ thay vì trả buổi rỗng.
+      return {
+        status: 'rest',
+        date: day,
+        weekNumber: res.weekNumber,
+        dayNumber: res.dayNumber,
+        programRevisionId: revisionId,
+        session: null,
+        nextSession,
+        progress,
+      };
+    }
+
+    const session = await this.hydratePlannedSession(planned);
+    return {
+      status: 'training',
+      date: day,
+      weekNumber: res.weekNumber,
+      dayNumber: res.dayNumber,
+      programRevisionId: revisionId,
+      session,
+      nextSession,
+      progress,
     };
   }
 
@@ -275,6 +475,36 @@ export class ProgramService {
 
   // ---- helpers ----
 
+  /**
+   * hydratePlannedSession: PlannedSession row (kèm prescriptions + blocks) -> shape
+   * `PlannedSession` của contract, có exerciseName/exerciseSlug. Prescription là FK mềm
+   * tới Exercise (không relation) nên tên bài lấy bằng một query phụ và ghép vào — dùng
+   * chung cho /program/today và /program/active.
+   */
+  private async hydratePlannedSession(planned: {
+    id: string;
+    weekNumber: number;
+    dayNumber: number;
+    focus: string;
+    prescriptions: PrescriptionRow[];
+  }): Promise<PlannedSession> {
+    const exerciseIds = [...new Set(planned.prescriptions.map((p) => p.exerciseId))];
+    const exercises = await this.prisma.exercise.findMany({
+      where: { id: { in: exerciseIds } },
+      select: { id: true, slug: true, name: true },
+    });
+    const byId = new Map(exercises.map((e) => [e.id, e]));
+    return {
+      plannedSessionId: planned.id,
+      weekNumber: planned.weekNumber,
+      dayNumber: planned.dayNumber,
+      focus: planned.focus,
+      prescriptions: planned.prescriptions.map((p) =>
+        mapPrescriptionRow(p, byId.get(p.exerciseId)),
+      ),
+    };
+  }
+
   private targetGoals(
     profile: Profile,
     phasePriority: string[] | null,
@@ -300,6 +530,9 @@ export class ProgramService {
           type: 'static',
           currentRevision: 1,
           goalSummary: program.goalSummary,
+          durationWeeks: program.durationWeeks,
+          startDate: new Date(`${program.startDate}T00:00:00.000Z`),
+          trainingDays: program.trainingDays,
           phasePlan: (program.phasePlan ??
             undefined) as unknown as Prisma.InputJsonValue,
           status: 'active',

@@ -22,6 +22,10 @@ export function assembleProgram(
     idBySlug?: Map<string, string>;
     /** slug -> tên hiển thị của allowedPool; để client render mà không cần fetch pool. */
     nameBySlug?: Map<string, string>;
+    /** ngày bắt đầu chương trình (CODE gán, không phải LLM). 'YYYY-MM-DD'. */
+    startDate: string;
+    /** ISO weekday 1..7 tập trong tuần (CODE derive từ profile). vd [1,3,5]. */
+    trainingDays: number[];
   },
 ): Program {
   const programId = opts.programId ?? randomUUID();
@@ -75,6 +79,9 @@ export function assembleProgram(
     type: 'static',
     currentRevision: 1,
     goalSummary: draft.goalSummary,
+    durationWeeks: draft.durationWeeks,
+    startDate: opts.startDate,
+    trainingDays: opts.trainingDays,
     phasePlan: draft.phasePlan ?? null,
     status: 'active',
     revision: {
@@ -98,4 +105,41 @@ export function scheduleFromProfile(profile: Profile): {
     daysPerWeek: s?.daysPerWeek ?? null,
     minutesPerSession: s?.minutesPerSession ?? null,
   };
+}
+
+// ISO weekday mặc định khi user KHÔNG nêu ngày cụ thể: rải đều Mon..Sun theo daysPerWeek.
+// Mon=1..Sun=7. Với n buổi ta lấy n phần tử đầu — phủ nửa đầu tuần trước, đủ giãn cách.
+const DEFAULT_WEEKDAY_ORDER = [1, 3, 5, 2, 4, 6, 7]; // T2,T4,T6 rồi lấp — tránh dồn 2 ngày liền
+
+// Bảng chuẩn hoá tên thứ (LLM/onboarding có thể trả nhiều dạng) -> ISO weekday.
+const WEEKDAY_ALIASES: Record<string, number> = {
+  mon: 1, monday: 1, t2: 1, 'thu 2': 1, 'thứ 2': 1,
+  tue: 2, tues: 2, tuesday: 2, t3: 2, 'thứ 3': 2,
+  wed: 3, weds: 3, wednesday: 3, t4: 3, 'thứ 4': 3,
+  thu: 4, thur: 4, thurs: 4, thursday: 4, t5: 4, 'thứ 5': 4,
+  fri: 5, friday: 5, t6: 5, 'thứ 6': 5,
+  sat: 6, saturday: 6, t7: 6, 'thứ 7': 6,
+  sun: 7, sunday: 7, cn: 7, 'chủ nhật': 7,
+};
+
+/**
+ * trainingDaysFromProfile: ISO weekday (1..7, Mon=1) chương trình tập trong tuần.
+ * Ưu tiên preferredDays user nêu (chuẩn hoá qua alias); nếu thiếu/không đủ, lấp bằng
+ * DEFAULT_WEEKDAY_ORDER cho tới khi đủ daysPerWeek. Luôn sắp tăng dần và unique —
+ * index (1-based) của mảng này = PlannedSession.dayNumber tương ứng.
+ */
+export function trainingDaysFromProfile(profile: Profile): number[] {
+  const s = profile.constraint.schedule;
+  const want = s?.daysPerWeek ?? 0;
+  const picked = new Set<number>();
+
+  for (const raw of s?.preferredDays ?? []) {
+    const iso = WEEKDAY_ALIASES[String(raw).trim().toLowerCase()];
+    if (iso && picked.size < want) picked.add(iso);
+  }
+  for (const iso of DEFAULT_WEEKDAY_ORDER) {
+    if (picked.size >= want) break;
+    picked.add(iso);
+  }
+  return [...picked].sort((a, b) => a - b);
 }

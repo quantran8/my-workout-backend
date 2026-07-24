@@ -9,12 +9,13 @@
 
 **Source paths**
 
-- [`program.service.ts`](../../../../src/program/program.service.ts) — generate / persist / revise
+- [`program.service.ts`](../../../../src/program/program.service.ts) — generate / persist / revise / current
 - [`program-validator.ts`](../../../../src/program/program-validator.ts) — **trust but verify** over the LLM
-- [`program.helpers.ts`](../../../../src/program/program.helpers.ts) — draft → Program assembly
+- [`program.helpers.ts`](../../../../src/program/program.helpers.ts) — draft → Program assembly, weekday derivation
+- [`calendar.ts`](../../../../src/program/calendar.ts) — **deterministic** date → (week, day) resolution + progress total
 - [`pool-retrieval.ts`](../../../../src/program/pool-retrieval.ts) — the slim pool sent to the LLM
 - [`nutrition.ts`](../../../../src/program/nutrition.ts) — deterministic calorie/protein target (not the LLM)
-- [`program.types.ts`](../../../../src/program/program.types.ts) — Prescription + interval blocks
+- [`program.types.ts`](../../../../src/program/program.types.ts) — Prescription + interval blocks + `CurrentResponse`/`SessionPointer`
 
 ---
 
@@ -29,11 +30,18 @@ Turns a saved profile into a training program: the LLM drafts it, deterministic 
 ```
 generate
   1. profile + guardrail (policy + allowedPool)
-  2. pool-retrieval → slim pool (~2K tokens) sent to the LLM
-  3. LLM → ProgramDraft (no ids, no type)
-  4. assembleProgram → ids assigned, slug kept for validation
-  5. validateProgram → violations?  yes → re-prompt with them  /  no → persist
-  6. persist: Program + Revision + PlannedSession + Prescription (+ PrescriptionBlock)
+  2. startDate = today; trainingDays = trainingDaysFromProfile (CODE, not LLM)
+  3. pool-retrieval → slim pool (~2K tokens) sent to the LLM
+  4. LLM → ProgramDraft (no ids, no type; carries durationWeeks)
+  5. assembleProgram → ids assigned, slug kept; startDate/trainingDays attached
+  6. validateProgram → violations?  yes → re-prompt with them  /  no → persist
+  7. persist: Program(+durationWeeks/startDate/trainingDays) + Revision + PlannedSession + Prescription (+ PrescriptionBlock)
+
+current  (GET /program/current?date=)
+  active program → calendar.resolveDate(date) → training | rest | before_start |
+  program_complete | no_program.  training → the matching PlannedSession, hydrated.
+  Always carries nextSession (next unlogged planned day) + programRevisionId +
+  progress { completed, total }, so a rest day is still startable.
 ```
 
 ---
@@ -109,6 +117,30 @@ generate
 - **Why** — the LLM must not produce calorie targets (core invariant), and the client must not either (mobile `API-3`). One deterministic source. `NUTRITION_RULE_VERSION` records the formula version.
 - **Code** — [`nutrition.ts`](../../../../src/program/nutrition.ts); attached in [`program.service.ts`](../../../../src/program/program.service.ts) — `generateStaticProgram`, `getActive`
 
+### `PROGRAM-12` — the program has a duration, and sessions must cover every week of it
+
+- **Trigger** — validation of the draft.
+- **Effect** — the LLM outputs `durationWeeks`; the validator rejects it outside `[MIN_PROGRAM_WEEKS=2, MAX_PROGRAM_WEEKS=24]` (`DURATION_OUT_OF_RANGE`), and rejects a session set that does not cover **exactly** weeks `1..durationWeeks` — any missing or out-of-range `weekNumber` is `WEEK_COVERAGE_MISMATCH`.
+- **Why** — a program with no declared length can't be placed on a calendar, and a gap week would leave the user with a day the plan can't answer. Duration is the LLM's call (goal-dependent) but the range and full coverage are code's.
+- **Edge cases** — the range check short-circuits coverage: a below-min duration reports only `DURATION_OUT_OF_RANGE`. `durationWeeks` is persisted on `Program`.
+- **Code** — [`program-validator.ts:32`](../../../../src/program/program-validator.ts#L32) (the `0)` block); [`program-draft.schema.ts`](../../../../src/llm/schemas/program-draft.schema.ts)
+
+### `PROGRAM-13` — a calendar day resolves to the current session deterministically, no row per day
+
+- **Trigger** — `GET /program/current?date=YYYY-MM-DD` (date optional, defaults to today UTC; a malformed date is a 400).
+- **Effect** — `resolveDate` maps the date to `training | rest | before_start | program_complete` from `startDate` + `trainingDays` + `durationWeeks`; `getCurrent` adds `no_program` when there is no active program. `training` returns the `PlannedSession` at the resolved `(weekNumber, dayNumber)` in `session`, hydrated with exercise names/blocks (same shape as `getActive`). **Every** non-`no_program` response also carries `nextSession` (a `SessionPointer`: the first planned day in week/day order with no completed session — the same next-day as `DASHBOARD-4`) and `programRevisionId`, so a **rest day is still actionable**: the client can start the next session immediately rather than being forced to wait.
+- **Why** — `PlannedSession` has only `weekNumber`/`dayNumber`, no date. `trainingDays` (ISO weekday `1..7`, Mon=1, sorted; its 1-based index **is** `dayNumber`) plus `startDate` is the whole bridge to the real calendar — computed, never materialised as one row per day. `nextSession` is bundled so the mobile hero (user-centric) never dead-ends on a rest day.
+- **Edge cases** — `startDate` and `trainingDays` are **code-assigned** at generate (start = today, weekdays = `trainingDaysFromProfile` from `preferredDays`/`daysPerWeek`), never the LLM. `trainingDays` empty ⇒ every in-range day is `rest` (but `nextSession` may still exist). A resolved training day with no matching `PlannedSession` row (should not happen — `WEEK_COVERAGE_MISMATCH` guards it) degrades to `rest`, never an empty session. `nextSession` is null once every planned day is logged.
+- **Code** — [`calendar.ts`](../../../../src/program/calendar.ts); [`program.service.ts`](../../../../src/program/program.service.ts) — `getCurrent`; [`program.helpers.ts`](../../../../src/program/program.helpers.ts) — `trainingDaysFromProfile`
+
+### `PROGRAM-14` — whole-program progress is "X of M", M = durationWeeks × training-days-per-week
+
+- **Trigger** — `GET /program/current` (and mirrored on `GET /dashboard`, see `DASHBOARD-7`).
+- **Effect** — `progress = { completed, total }`. `total = totalPlannedSessions = durationWeeks × trainingDays.length`. `completed` = distinct planned days backed by a `completed` `WorkoutSession` (ad-hoc logs with `plannedSessionId = null` do **not** count); the dashboard caps `completed` at `total`.
+- **Why** — this is the absolute "how far through the whole plan am I" the reach-based `due`/`adherence` (`DASHBOARD-3`) deliberately does not answer.
+- **Edge cases** — no active program ⇒ `{ completed: 0, total: 0 }`. Legacy rows with `trainingDays = []` ⇒ `total = 0`.
+- **Code** — [`calendar.ts`](../../../../src/program/calendar.ts) — `totalPlannedSessions`; [`program.service.ts`](../../../../src/program/program.service.ts) — `getCurrent`
+
 ### `PROGRAM-11` — the program response carries exercise display names
 
 - **Trigger** — both program endpoints returning prescriptions.
@@ -122,7 +154,7 @@ generate
 
 | Row | Tracks |
 |---|---|
-| `Program` | one active static program per user, `basedOnProfileVersion` |
+| `Program` | one active static program per user, `basedOnProfileVersion`, `durationWeeks`, `startDate`, `trainingDays` (ISO weekday `1..7`) |
 | `ProgramRevision` | append-only; static = 1, living plans add more |
 | `PlannedSession` | week/day/focus |
 | `Prescription` | targets + `restSec` (+ `targetPaceSecPerKm` for cardio) |
@@ -153,3 +185,4 @@ generate
 - `2026-07-24` — Claude — `PROGRAM-10` (server-computed nutrition, not persisted) and `PROGRAM-11` (prescriptions carry `exerciseName`/`exerciseSlug`); both endpoints now return the same enriched `Program` contract consumed by the mobile plan screen.
 - `2026-07-24` — Claude — upstream LLM errors now surface as 503 with the provider's message instead of leaking as an opaque 400 (see gotchas).
 - `2026-07-24` — Claude — fixed Exercise schema drift (migrations rename `cues`→`instructions`, add `contentMode`/`environments`) that was breaking `buildGuardrail` and thus every `POST /program/generate` with an opaque 400. Also applied the previously-pending `prescription_blocks` migration.
+- `2026-07-24` — Claude — `PROGRAM-12`/`13`/`14`: programs now carry `durationWeeks` (LLM-chosen, validator-bounded `[2,24]`, full week coverage), `startDate` + `trainingDays` (code-derived), and a `calendar.ts` resolver behind `GET /program/current` that maps any date → a session / rest / complete plus `nextSession` (next unlogged day, so rest days stay startable) + `progress { completed, total }`. Migration `20260724010000_add_program_duration_calendar`. Peer: mobile `home`/`practice` memory (new `programProgress` on `/dashboard`, new `/program/current` contract).

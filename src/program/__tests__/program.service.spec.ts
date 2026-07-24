@@ -62,46 +62,51 @@ const guard: GuardrailResult = {
   safetyNote: '',
 };
 
-// 1 buổi/tuần, 1 bài trong pool -> hợp lệ
+const rx = {
+  order: 1,
+  targetSets: 3,
+  targetReps: [8, 12] as [number, number],
+  restSec: 90,
+};
+
+// 2 tuần × 1 buổi/tuần, 1 bài trong pool -> hợp lệ (durationWeeks phải ≥ 2 và phủ đủ 1..N).
 const cleanDraft: ProgramDraft = {
   goalSummary: 'Chương trình sức mạnh cơ bản.',
+  durationWeeks: 2,
   phasePlan: [],
   sessions: [
     {
       weekNumber: 1,
       dayNumber: 1,
       focus: 'Full body',
-      prescriptions: [
-        {
-          exerciseId: 'goblet_squat',
-          order: 1,
-          targetSets: 3,
-          targetReps: [8, 12],
-          restSec: 90,
-        },
-      ],
+      prescriptions: [{ exerciseId: 'goblet_squat', ...rx }],
+    },
+    {
+      weekNumber: 2,
+      dayNumber: 1,
+      focus: 'Full body',
+      prescriptions: [{ exerciseId: 'goblet_squat', ...rx }],
     },
   ],
 };
 
-// bài ngoài pool -> EXERCISE_NOT_IN_POOL
+// bài ngoài pool -> EXERCISE_NOT_IN_POOL (cấu trúc tuần vẫn hợp lệ để cô lập vi phạm pool)
 const violatingDraft: ProgramDraft = {
   goalSummary: 'Bịa bài.',
+  durationWeeks: 2,
   phasePlan: [],
   sessions: [
     {
       weekNumber: 1,
       dayNumber: 1,
       focus: 'Full body',
-      prescriptions: [
-        {
-          exerciseId: 'made_up_exercise',
-          order: 1,
-          targetSets: 3,
-          targetReps: [8, 12],
-          restSec: 90,
-        },
-      ],
+      prescriptions: [{ exerciseId: 'made_up_exercise', ...rx }],
+    },
+    {
+      weekNumber: 2,
+      dayNumber: 1,
+      focus: 'Full body',
+      prescriptions: [{ exerciseId: 'made_up_exercise', ...rx }],
     },
   ],
 };

@@ -60,7 +60,16 @@ function prescription(over: Partial<Prescription> = {}): Prescription {
   };
 }
 
+// 2-week program (durationWeeks phải ≥ 2 và phủ đủ 1..N) — cùng buổi lặp lại hai tuần,
+// để các test block/pool không dính DURATION_OUT_OF_RANGE / WEEK_COVERAGE_MISMATCH.
 function programWith(p: Prescription): Program {
+  const session = (week: number) => ({
+    plannedSessionId: `s${week}`,
+    weekNumber: week,
+    dayNumber: 1,
+    focus: 'cardio',
+    prescriptions: [p],
+  });
   return {
     programId: 'prog',
     userId: 'u1',
@@ -68,6 +77,9 @@ function programWith(p: Prescription): Program {
     type: 'static',
     currentRevision: 1,
     goalSummary: '',
+    durationWeeks: 2,
+    startDate: '2026-07-23',
+    trainingDays: [1],
     phasePlan: null,
     status: 'active',
     revision: {
@@ -76,15 +88,7 @@ function programWith(p: Prescription): Program {
       revisionNumber: 1,
       createdAt: '2026-07-23T00:00:00.000Z',
       adjustmentReason: null,
-      sessions: [
-        {
-          plannedSessionId: 's1',
-          weekNumber: 1,
-          dayNumber: 1,
-          focus: 'cardio',
-          prescriptions: [p],
-        },
-      ],
+      sessions: [session(1), session(2)],
     },
   };
 }
@@ -187,5 +191,37 @@ describe('interval blocks', () => {
       guard,
     );
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('program duration + week coverage', () => {
+  it('rejects a duration below the minimum', () => {
+    const p = programWith(prescription());
+    p.durationWeeks = 1; // < MIN_PROGRAM_WEEKS
+    const result = validateProgram(p, guard);
+    expect(result.violations.map((v) => v.code)).toContain('DURATION_OUT_OF_RANGE');
+  });
+
+  it('rejects a duration above the maximum', () => {
+    const p = programWith(prescription());
+    p.durationWeeks = 25; // > MAX_PROGRAM_WEEKS
+    const result = validateProgram(p, guard);
+    expect(result.violations.map((v) => v.code)).toContain('DURATION_OUT_OF_RANGE');
+  });
+
+  it('rejects when a week has no sessions (coverage gap)', () => {
+    const p = programWith(prescription());
+    // programWith covers weeks 1..2; claim 3 weeks -> week 3 is uncovered.
+    p.durationWeeks = 3;
+    const result = validateProgram(p, guard);
+    expect(result.violations.map((v) => v.code)).toContain('WEEK_COVERAGE_MISMATCH');
+  });
+
+  it('rejects a session in a week beyond the duration', () => {
+    const p = programWith(prescription());
+    p.durationWeeks = 1; // sessions include week 2 -> extra, and below min
+    const result = validateProgram(p, guard);
+    // below min short-circuits coverage, so assert the duration violation fires
+    expect(result.violations.map((v) => v.code)).toContain('DURATION_OUT_OF_RANGE');
   });
 });

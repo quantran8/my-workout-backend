@@ -46,6 +46,11 @@ export class DashboardService {
       },
     });
     const plannedDays = program?.revisions[0]?.sessions ?? [];
+    // Whole-program total = durationWeeks × training-days-per-week (DASHBOARD-7). 0 when
+    // no active program. trainingDays defaults to [] on legacy rows -> total 0, safe.
+    const programTotal = program
+      ? program.durationWeeks * program.trainingDays.length
+      : 0;
 
     // Every completed session, newest first. `startedAt` is the day the work
     // happened; it drives streak, the done-days list, and the recent row.
@@ -107,6 +112,12 @@ export class DashboardService {
 
     return {
       sessionLog: { days, baselineSessions: done },
+      // Distinct planned days completed, capped at the program total (a day logged
+      // twice, or ad-hoc logs, never push completed past total).
+      programProgress: {
+        completed: Math.min(completedPlannedIds.size, programTotal),
+        total: programTotal,
+      },
       streak,
       adherence,
       due,

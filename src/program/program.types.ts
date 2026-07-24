@@ -74,6 +74,43 @@ export interface ProgramRevision {
   sessions: PlannedSession[];
 }
 
+// Tiến độ "đã tập X / M buổi" của chương trình đang chạy.
+export interface ProgramProgress {
+  completed: number; // số buổi đã hoàn thành (WorkoutSession completed gắn planned day)
+  total: number;     // tổng buổi cả chương trình = durationWeeks × ngày tập/tuần
+}
+
+// Trả về cho GET /program/current. status quyết định UI: có bài / nghỉ / xong / chưa có program.
+export type CurrentStatus =
+  | 'training'
+  | 'rest'
+  | 'before_start'
+  | 'program_complete'
+  | 'no_program';
+
+// Con trỏ gọn tới một buổi để client start ngay (không cần fetch nguyên program).
+export interface SessionPointer {
+  plannedSessionId: string;
+  programRevisionId: string;
+  name: string;      // focus của buổi, hiển thị làm tên
+  exercises: number; // số prescription
+}
+
+export interface CurrentResponse {
+  status: CurrentStatus;
+  date: string;              // 'YYYY-MM-DD' đã hỏi (mặc định hôm nay)
+  weekNumber?: number | null;
+  dayNumber?: number | null;
+  // Revision hiện hành — client cần để start buổi (POST /session/create nhận
+  // programRevisionId). Có bất cứ khi nào program active, kể cả ngày rest. null khi no_program.
+  programRevisionId?: string | null;
+  session?: PlannedSession | null; // buổi của HÔM NAY (chỉ khi status='training')
+  // Buổi chưa-log kế tiếp (week/day order). Cho ngày rest: user vẫn tập được ngay.
+  // Khớp dashboard.nextSession. null khi đã log hết / no_program.
+  nextSession?: SessionPointer | null;
+  progress: ProgramProgress;
+}
+
 export interface Program {
   programId: string;
   userId: string;
@@ -81,6 +118,12 @@ export interface Program {
   type: ProgramType;
   currentRevision: number;   // static luôn = 1
   goalSummary: string;       // LLM diễn giải "chương trình này nhắm gì & vì sao"
+  // Độ dài + lịch để suy "hôm nay là buổi nào". durationWeeks: LLM chọn, validator kẹp [2,24].
+  // startDate: ngày bắt đầu (ISO date). trainingDays: ISO weekday 1..7 (Mon=1..Sun=7) sắp tăng,
+  // index 1-based = PlannedSession.dayNumber. Cả ba do CODE gán, không phải LLM.
+  durationWeeks: number;
+  startDate: string;         // 'YYYY-MM-DD'
+  trainingDays: number[];    // vd [1,3,5] = T2/T4/T6
   phasePlan?: Phase[] | null;
   // Mục tiêu calo/đạm do CODE tính (nutrition.ts), KHÔNG do LLM. null khi thiếu số liệu
   // cơ thể. Không lưu DB (dẫn xuất từ profile) — chỉ đính vào response cho client hiển thị.

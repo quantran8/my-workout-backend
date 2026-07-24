@@ -46,6 +46,8 @@ export interface DraftPhase {
 /** Output của LlmService.generateProgram (backend gán id + type='static' sau). */
 export interface ProgramDraft {
   goalSummary: string;
+  /** Tổng số tuần chương trình kéo dài (vd 12 = 3 tháng). Validator kẹp [2,24]. */
+  durationWeeks: number;
   phasePlan: DraftPhase[];
   sessions: DraftSession[];
 }

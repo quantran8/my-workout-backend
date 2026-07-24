@@ -83,6 +83,14 @@ GET /dashboard  → AuthGuard → getUserId(req) → DashboardService.getDashboa
 - **Why** — `WorkoutSession.plannedSessionId` is a **soft FK** (no Prisma relation), so the workout name is fetched with a separate `plannedSession.findUnique`.
 - **Code** — [`dashboard.service.ts`](../../../../src/dashboard/dashboard.service.ts#L133) — `buildRecent`; [`dashboard.metrics.ts`](../../../../src/dashboard/dashboard.metrics.ts#L77) — `computeVolumeKg`
 
+### `DASHBOARD-7` — whole-program progress = done ÷ total, total = durationWeeks × training-days/week
+
+- **Trigger** — every read.
+- **Condition** — `programProgress.total = program.durationWeeks × program.trainingDays.length` (0 when no active program or a legacy row with `trainingDays = []`). `programProgress.completed` = distinct planned days backed by a completed session (`completedPlannedIds`), **capped** at `total`.
+- **Effect** — `programProgress: { completed, total }`. This is the absolute "X of M sessions in the whole plan", distinct from the reach-based `due`/`adherence` of `DASHBOARD-3`.
+- **Why** — `PlannedSession` has no date, but `durationWeeks` + `trainingDays` on `Program` (added for `PROGRAM-12`/`13`) make the plan's *total* size computable. The cap keeps a day logged twice, or ad-hoc logs, from pushing `completed` past `total`.
+- **Code** — [`dashboard.service.ts`](../../../../src/dashboard/dashboard.service.ts#L48) — `programTotal` + the `programProgress` block. Mirrors `PROGRAM-14` on `/program/today`.
+
 ### `DASHBOARD-6` — access tier from `User.tier`, lower-cased on the wire
 
 - **Trigger** — every read.
@@ -119,3 +127,4 @@ Stateless. Reads `Program` / `ProgramRevision` / `PlannedSession` / `WorkoutSess
 
 - `2026-07-24` — Claude — initial version: `GET /dashboard` aggregate for the Home screen (streak, adherence, next/recent, tier). Metrics are pure functions (`dashboard/v1.0`).
 - `2026-07-24` — Claude — `DASHBOARD-4`: `nextSession` now carries `programRevisionId` so the mobile practice flow can start the session without a second call. Peer: mobile `home`/`practice` memory.
+- `2026-07-24` — Claude — `DASHBOARD-7`: added `programProgress { completed, total }` (whole-program "X of M"), total = `durationWeeks × trainingDays.length`. Mirrors `PROGRAM-14`. Peer: mobile `home` memory (new field on `DashboardResponse`).
