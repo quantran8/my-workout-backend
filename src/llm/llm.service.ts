@@ -20,9 +20,10 @@ const GENERATION_SYSTEM = `Bạn là bộ soạn chương trình tập. Soạn c
 1. CHỈ dùng exercise_id có trong allowed_pool. Không bịa bài, không dùng bài ngoài danh sách. Pool thiếu bài cho một pattern -> dùng bài gần nhất TRONG pool.
 2. Tuân policy: max_weekly_sets_per_muscle (tổng set mỗi nhóm cơ chính/tuần KHÔNG vượt trần); conservative_start=true -> bắt đầu nhẹ; allow_calorie_deficit=false -> không đề xuất ăn kiêng; must_resolve_goal_conflict=true -> theo goal_phase_priority, cardio tối đa 2 buổi/tuần cường độ thấp, BẮT BUỘC điền phasePlan.
 3. Số buổi/tuần = schedule.days_per_week. Mỗi buổi có focus rõ.
-4. durationWeeks: chọn độ dài hợp lý cho mục tiêu, TRONG khoảng 2..24 tuần (vd hồi phục 4-6, tăng cơ 8-12, chuyển hoá 12+). sessions PHẢI phủ ĐỦ mọi tuần 1..durationWeeks — mỗi tuần đúng schedule.days_per_week buổi. weekNumber chạy 1..durationWeeks, dayNumber chạy 1..days_per_week trong mỗi tuần.
-5. goalSummary: 1-2 câu giải thích chương trình nhắm gì và vì sao.
-6. Nếu có previous_violations: sửa đúng những điểm đó, giữ nguyên phần còn lại.`;
+4. Số bài MỖI BUỔI = exercises_per_session (đã tính theo thời lượng user tập được). Mỗi buổi PHẢI có ĐÚNG exercises_per_session bài (chênh tối đa ±1). Không kê quá nhiều bài cho buổi ngắn, không quá ít cho buổi dài.
+5. durationWeeks: chọn độ dài hợp lý cho mục tiêu, TRONG khoảng 2..24 tuần (vd hồi phục 4-6, tăng cơ 8-12, chuyển hoá 12+). sessions PHẢI phủ ĐỦ mọi tuần 1..durationWeeks — mỗi tuần đúng schedule.days_per_week buổi. weekNumber chạy 1..durationWeeks, dayNumber chạy 1..days_per_week trong mỗi tuần.
+6. goalSummary: 1-2 câu giải thích chương trình nhắm gì và vì sao.
+7. Nếu có previous_violations: sửa đúng những điểm đó, giữ nguyên phần còn lại.`;
 
 /**
  * Một chỗ duy nhất gọi model (spec §4). Provider = OpenAI. Structured output qua
@@ -72,6 +73,7 @@ export class LlmService {
         days_per_week: input.schedule.daysPerWeek,
         minutes_per_session: input.schedule.minutesPerSession,
       },
+      exercises_per_session: input.exercisesPerSession,
       previous_violations: input.previousViolations ?? [],
     });
     return this.callStructured<ProgramDraft>({

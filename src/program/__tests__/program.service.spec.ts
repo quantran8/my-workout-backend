@@ -16,7 +16,9 @@ const profile: Profile = {
     equipment: ['dumbbell', 'bodyweight'],
     injuries: [],
     mobilityLimits: [],
-    schedule: { daysPerWeek: 1, minutesPerSession: 45 },
+    // 24 min / 8 = 3 exercises per session (the validated minimum), so the clean
+    // drafts below carry exactly 3 prescriptions each.
+    schedule: { daysPerWeek: 1, minutesPerSession: 24 },
   },
   target: {
     statedGoals: ['khỏe hơn'],
@@ -62,53 +64,35 @@ const guard: GuardrailResult = {
   safetyNote: '',
 };
 
-const rx = {
-  order: 1,
-  targetSets: 3,
-  targetReps: [8, 12] as [number, number],
-  restSec: 90,
-};
+// Buổi có đúng 3 bài (khớp perSession=3 từ minutesPerSession=24). Pool chỉ có 1 bài,
+// nên lặp lại slug — validator kiểm slug ∈ pool, không kiểm trùng.
+const session = (weekNumber: number, slug: string) => ({
+  weekNumber,
+  dayNumber: 1,
+  focus: 'Full body',
+  prescriptions: [1, 2, 3].map((order) => ({
+    exerciseId: slug,
+    order,
+    targetSets: 3,
+    targetReps: [8, 12] as [number, number],
+    restSec: 90,
+  })),
+});
 
-// 2 tuần × 1 buổi/tuần, 1 bài trong pool -> hợp lệ (durationWeeks phải ≥ 2 và phủ đủ 1..N).
+// 2 tuần × 1 buổi/tuần × 3 bài/buổi -> hợp lệ.
 const cleanDraft: ProgramDraft = {
   goalSummary: 'Chương trình sức mạnh cơ bản.',
   durationWeeks: 2,
   phasePlan: [],
-  sessions: [
-    {
-      weekNumber: 1,
-      dayNumber: 1,
-      focus: 'Full body',
-      prescriptions: [{ exerciseId: 'goblet_squat', ...rx }],
-    },
-    {
-      weekNumber: 2,
-      dayNumber: 1,
-      focus: 'Full body',
-      prescriptions: [{ exerciseId: 'goblet_squat', ...rx }],
-    },
-  ],
+  sessions: [session(1, 'goblet_squat'), session(2, 'goblet_squat')],
 };
 
-// bài ngoài pool -> EXERCISE_NOT_IN_POOL (cấu trúc tuần vẫn hợp lệ để cô lập vi phạm pool)
+// bài ngoài pool -> EXERCISE_NOT_IN_POOL (cấu trúc tuần/buổi vẫn hợp lệ để cô lập vi phạm pool)
 const violatingDraft: ProgramDraft = {
   goalSummary: 'Bịa bài.',
   durationWeeks: 2,
   phasePlan: [],
-  sessions: [
-    {
-      weekNumber: 1,
-      dayNumber: 1,
-      focus: 'Full body',
-      prescriptions: [{ exerciseId: 'made_up_exercise', ...rx }],
-    },
-    {
-      weekNumber: 2,
-      dayNumber: 1,
-      focus: 'Full body',
-      prescriptions: [{ exerciseId: 'made_up_exercise', ...rx }],
-    },
-  ],
+  sessions: [session(1, 'made_up_exercise'), session(2, 'made_up_exercise')],
 };
 
 // ---- helpers to build the service with mocks -------------------------------

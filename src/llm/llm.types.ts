@@ -71,5 +71,7 @@ export interface GenerateProgramInput {
   allowedPool: SlimExercise[];
   policy: GuardrailPolicy;
   schedule: { daysPerWeek?: number | null; minutesPerSession?: number | null };
+  /** Số bài MỖI BUỔI do CODE quyết định (từ minutesPerSession). LLM PHẢI tuân (±1). */
+  exercisesPerSession: number;
   previousViolations?: { code: string; detail: string; where?: string }[];
 }

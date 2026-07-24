@@ -1,4 +1,4 @@
-import { slimPool, buildSlots } from '../pool-retrieval';
+import { slimPool, buildSlots, exercisesPerSession } from '../pool-retrieval';
 import { Exercise } from '../../profile/guardrail';
 
 // Fixture: camelCase Exercise rows (shape guardrail/validator use), with extra fields
@@ -96,13 +96,15 @@ describe('buildSlots', () => {
     for (const e of selected) expect(poolIds.has(e.exerciseId)).toBe(true);
   });
 
-  it('respects the slot cap derived from minutesPerSession', () => {
-    // 24 min / 8 = 3 slots
+  it('sends a pool wider than one session (perSession × days), capped at pool size', () => {
+    // 24 min / 8 = 3 exercises/session; 3 days -> target 9, but the pool only has
+    // 3 rows, so it returns all 3 (never more than the pool). The point: the pool
+    // is NOT clamped down to a single session's count anymore.
     const selected = buildSlots(pool, ['strength'], {
       daysPerWeek: 3,
       minutesPerSession: 24,
     });
-    expect(selected.length).toBeLessThanOrEqual(3);
+    expect(selected.length).toBe(3); // whole pool, since 3 < perSession*days
     expect(selected.length).toBeGreaterThan(0);
   });
 
@@ -117,5 +119,19 @@ describe('buildSlots', () => {
 
   it('returns empty for an empty pool', () => {
     expect(buildSlots([], ['strength'], { daysPerWeek: 3 })).toEqual([]);
+  });
+});
+
+describe('exercisesPerSession', () => {
+  it('is minutes / 8, clamped to [3, 8]', () => {
+    expect(exercisesPerSession(24)).toBe(3); // 24/8 = 3
+    expect(exercisesPerSession(48)).toBe(6); // 48/8 = 6
+    expect(exercisesPerSession(80)).toBe(8); // 80/8 = 10 -> clamp 8
+    expect(exercisesPerSession(8)).toBe(3); // 8/8 = 1 -> clamp 3
+  });
+
+  it('defaults to 5 when minutesPerSession is missing', () => {
+    expect(exercisesPerSession(null)).toBe(5);
+    expect(exercisesPerSession(undefined)).toBe(5);
   });
 });

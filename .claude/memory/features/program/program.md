@@ -80,6 +80,14 @@ current  (GET /program/current?date=)
 - **Effect** — a week whose session count differs from `expectedDaysPerWeek` is `SESSION_COUNT_MISMATCH`.
 - **Code** — [`program-validator.ts:150`](../../../../src/program/program-validator.ts#L150)
 
+### `PROGRAM-15` — exercises per session are code-decided from session length, not the LLM's whim
+
+- **Trigger** — generation + validation.
+- **Effect** — `exercisesPerSession(minutesPerSession)` = `round(minutes / 8)` clamped `[3, 8]` (default 5 when unset). This target is sent to the LLM (`exercises_per_session` in the prompt) **and** enforced: any session whose prescription count differs from it by more than `EXERCISE_COUNT_TOLERANCE = 1` is `EXERCISE_COUNT_MISMATCH`.
+- **Why** — before this, `minutesPerSession` only sized the *pool* sent to the LLM, not the per-session count, so a 30-min and a 90-min session could end up with the same number of exercises at the model's discretion. Session length is a user constraint; code owns it, the LLM obeys (core invariant).
+- **Edge cases** — the ±1 tolerance lets the LLM balance a heavier/lighter day. The pool sent to the LLM (`buildSlots`) is deliberately **wider** than one session — `perSession × daysPerWeek` capped at pool size — so a multi-week plan has variety instead of repeating the same handful of movements (see `PROGRAM-9`).
+- **Code** — [`pool-retrieval.ts`](../../../../src/program/pool-retrieval.ts) — `exercisesPerSession`; [`program-validator.ts`](../../../../src/program/program-validator.ts) — rule 5; [`llm.service.ts`](../../../../src/llm/llm.service.ts) — `GENERATION_SYSTEM` point 4
+
 ### `PROGRAM-6` — interval blocks are cardio-only, contiguous, and measurable
 
 - **Condition** — a prescription carries `blocks`.
@@ -103,11 +111,11 @@ current  (GET /program/current?date=)
 - **Edge cases** — one active static program per user is an invariant maintained by the archive step.
 - **Code** — [`program.service.ts:205`](../../../../src/program/program.service.ts#L205) — `persist`
 
-### `PROGRAM-9` — the pool sent to the LLM is deliberately slim
+### `PROGRAM-9` — the pool sent to the LLM is deliberately slim, and sized for variety
 
-- **Effect** — `pool-retrieval.ts` sends `~2K tokens`: id, name, pattern, muscles, goal fit, equipment, difficulty, type. **No** instructions, cues or media.
-- **Why** — cost, and those fields are display-only — the model does not need them to choose a movement.
-- **Code** — [`pool-retrieval.ts`](../../../../src/program/pool-retrieval.ts)
+- **Effect** — `pool-retrieval.ts` sends each exercise as `~2K tokens` total: id, name, pattern, muscles, goal fit, equipment, difficulty, type. **No** instructions, cues or media. `buildSlots` picks the subset: it covers the base movement patterns + goal-fit, sized to `exercisesPerSession × daysPerWeek` capped at the pool size — **wider** than one session so a multi-week plan is not forced to repeat the same few movements.
+- **Why** — cost (drop display-only fields the model does not need to choose a movement), and variety (the pool is not clamped down to a single session's worth — that conflation was the bug `PROGRAM-15` fixed).
+- **Code** — [`pool-retrieval.ts`](../../../../src/program/pool-retrieval.ts) — `slimPool`, `buildSlots`
 
 ### `PROGRAM-10` — nutrition is code, derived, and not persisted
 
@@ -185,4 +193,5 @@ current  (GET /program/current?date=)
 - `2026-07-24` — Claude — `PROGRAM-10` (server-computed nutrition, not persisted) and `PROGRAM-11` (prescriptions carry `exerciseName`/`exerciseSlug`); both endpoints now return the same enriched `Program` contract consumed by the mobile plan screen.
 - `2026-07-24` — Claude — upstream LLM errors now surface as 503 with the provider's message instead of leaking as an opaque 400 (see gotchas).
 - `2026-07-24` — Claude — fixed Exercise schema drift (migrations rename `cues`→`instructions`, add `contentMode`/`environments`) that was breaking `buildGuardrail` and thus every `POST /program/generate` with an opaque 400. Also applied the previously-pending `prescription_blocks` migration.
+- `2026-07-24` — Claude — `PROGRAM-15`: exercises-per-session is now code-decided from `minutesPerSession` (`exercisesPerSession`, clamp `[3,8]`), sent to the LLM and enforced by validator `EXERCISE_COUNT_MISMATCH` (±1). `buildSlots` decoupled: the LLM pool is sized `perSession × daysPerWeek` (wider, for variety) instead of one session's worth (`PROGRAM-9` updated).
 - `2026-07-24` — Claude — `PROGRAM-12`/`13`/`14`: programs now carry `durationWeeks` (LLM-chosen, validator-bounded `[2,24]`, full week coverage), `startDate` + `trainingDays` (code-derived), and a `calendar.ts` resolver behind `GET /program/current` that maps any date → a session / rest / complete plus `nextSession` (next unlogged day, so rest days stay startable) + `progress { completed, total }`. Migration `20260724010000_add_program_duration_calendar`. Peer: mobile `home`/`practice` memory (new `programProgress` on `/dashboard`, new `/program/current` contract).

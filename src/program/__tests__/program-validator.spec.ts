@@ -225,3 +225,31 @@ describe('program duration + week coverage', () => {
     expect(result.violations.map((v) => v.code)).toContain('DURATION_OUT_OF_RANGE');
   });
 });
+
+describe('exercises per session', () => {
+  it('rejects when a session has too few exercises for the target', () => {
+    // programWith gives 1 prescription/session; target 3 -> |1-3| = 2 > tolerance.
+    const p = programWith(prescription());
+    const result = validateProgram(p, guard, { expectedExercisesPerSession: 3 });
+    expect(result.violations.map((v) => v.code)).toContain(
+      'EXERCISE_COUNT_MISMATCH',
+    );
+  });
+
+  it('allows a session within ±1 of the target', () => {
+    // 1 prescription vs target 2 -> |1-2| = 1 == tolerance, OK.
+    const p = programWith(prescription());
+    const result = validateProgram(p, guard, { expectedExercisesPerSession: 2 });
+    expect(result.violations.map((v) => v.code)).not.toContain(
+      'EXERCISE_COUNT_MISMATCH',
+    );
+  });
+
+  it('does not check when no target is provided', () => {
+    const p = programWith(prescription());
+    const result = validateProgram(p, guard);
+    expect(result.violations.map((v) => v.code)).not.toContain(
+      'EXERCISE_COUNT_MISMATCH',
+    );
+  });
+});

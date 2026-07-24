@@ -19,7 +19,8 @@ export interface Violation {
     | 'BLOCK_ORDER_INVALID'       // order không liên tục từ 1
     | 'BLOCK_NO_DIMENSION'        // block không có cả durationSec lẫn distanceM
     | 'DURATION_OUT_OF_RANGE'     // durationWeeks ngoài [MIN,MAX]
-    | 'WEEK_COVERAGE_MISMATCH';   // sessions không phủ đúng 1..durationWeeks
+    | 'WEEK_COVERAGE_MISMATCH'    // sessions không phủ đúng 1..durationWeeks
+    | 'EXERCISE_COUNT_MISMATCH';  // số bài/buổi lệch quá ±1 so với target (theo minutesPerSession)
   detail: string;
   where?: string;
 }
@@ -28,6 +29,9 @@ export interface Violation {
 // ngoài khoảng -> re-prompt (không tự sửa, theo PROGRAM-2).
 export const MIN_PROGRAM_WEEKS = 2;
 export const MAX_PROGRAM_WEEKS = 24;
+
+// Số bài/buổi được phép lệch so với target (perSession) — LLM cân đối buổi nặng/nhẹ ±1.
+export const EXERCISE_COUNT_TOLERANCE = 1;
 
 export interface ValidationResult {
   ok: boolean;
@@ -39,7 +43,10 @@ const CARDIO_MINIMAL_MAX_SESSIONS = 2; // khi phải giải goal-conflict: cardi
 export function validateProgram(
   program: Program,
   guard: GuardrailResult,
-  opts?: { expectedDaysPerWeek?: number | null },
+  opts?: {
+    expectedDaysPerWeek?: number | null;
+    expectedExercisesPerSession?: number | null;
+  },
 ): ValidationResult {
   const violations: Violation[] = [];
   // Key theo SLUG: đó là thứ LLM trả về, và uuid chỉ được gán sau khi map thành công.
@@ -186,6 +193,21 @@ export function validateProgram(
           code: 'SESSION_COUNT_MISMATCH',
           detail: `tuần ${week}: ${n} buổi, lịch user là ${want} buổi/tuần`,
           where: `week ${week}`,
+        });
+      }
+    }
+  }
+
+  // 5) Số bài mỗi buổi khớp thời lượng user (±tolerance). CODE quyết định, LLM tuân.
+  const perSession = opts?.expectedExercisesPerSession;
+  if (perSession != null) {
+    for (const s of sessions) {
+      const n = s.prescriptions.length;
+      if (Math.abs(n - perSession) > EXERCISE_COUNT_TOLERANCE) {
+        violations.push({
+          code: 'EXERCISE_COUNT_MISMATCH',
+          detail: `buổi (tuần ${s.weekNumber}, ngày ${s.dayNumber}): ${n} bài, mục tiêu ${perSession}±${EXERCISE_COUNT_TOLERANCE} theo thời lượng`,
+          where: `${s.plannedSessionId}`,
         });
       }
     }

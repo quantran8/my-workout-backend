@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { ProfileService } from '../profile/profile.service';
 import { validateProgram, Violation } from './program-validator';
-import { buildSlots, slimPool } from './pool-retrieval';
+import { buildSlots, slimPool, exercisesPerSession } from './pool-retrieval';
 import {
   assembleProgram,
   scheduleFromProfile,
@@ -130,6 +130,9 @@ export class ProgramService {
     }
 
     const schedule = scheduleFromProfile(profile);
+    // Số bài mỗi buổi do CODE quyết định theo thời lượng user tập được — ép LLM tuân
+    // (validator EXERCISE_COUNT_MISMATCH ±1), KHÔNG để LLM tùy hứng.
+    const perSession = exercisesPerSession(schedule.minutesPerSession);
     // Lịch dương: chương trình bắt đầu HÔM NAY, tập những ISO weekday derive từ profile.
     // Cả hai do CODE gán (không phải LLM) — dùng để suy "hôm nay là buổi nào" khi client hỏi.
     const startDate = todayDateString();
@@ -154,6 +157,7 @@ export class ProgramService {
         allowedPool: slim,
         policy: guard.policy,
         schedule,
+        exercisesPerSession: perSession,
         previousViolations: lastViolations,
       });
       const program = assembleProgram(draft, {
@@ -166,6 +170,7 @@ export class ProgramService {
       });
       const { ok, violations } = validateProgram(program, guard, {
         expectedDaysPerWeek: schedule.daysPerWeek,
+        expectedExercisesPerSession: perSession,
       });
       if (ok) {
         await this.persist(program);
