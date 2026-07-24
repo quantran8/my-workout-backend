@@ -52,6 +52,7 @@ function prescription(over: Partial<Prescription> = {}): Prescription {
     prescriptionId: 'p1',
     exerciseId: cardio.exerciseId,
     exerciseSlug: 'outdoor_run',
+    exerciseName: 'Outdoor Run',
     order: 1,
     targetSets: 1,
     restSec: 60,

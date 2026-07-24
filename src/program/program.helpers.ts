@@ -20,6 +20,8 @@ export function assembleProgram(
     revisionId?: string;
     /** slug -> uuid của allowedPool; thiếu map thì exerciseId để rỗng cho validator bắt. */
     idBySlug?: Map<string, string>;
+    /** slug -> tên hiển thị của allowedPool; để client render mà không cần fetch pool. */
+    nameBySlug?: Map<string, string>;
   },
 ): Program {
   const programId = opts.programId ?? randomUUID();
@@ -32,6 +34,7 @@ export function assembleProgram(
       // LLM trả slug; giữ lại để validator/thông báo lỗi đọc được, và dịch sang uuid.
       exerciseSlug: p.exerciseId,
       exerciseId: opts.idBySlug?.get(p.exerciseId) ?? '',
+      exerciseName: opts.nameBySlug?.get(p.exerciseId) ?? p.exerciseId,
       order: p.order,
       targetSets: p.targetSets,
       targetReps: p.targetReps ?? null,

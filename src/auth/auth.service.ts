@@ -36,10 +36,10 @@ export class AuthService implements OnModuleInit {
 
   onModuleInit() {
     const url = process.env.SUPABASE_URL;
-    const anonKey = process.env.SUPABASE_ANON_KEY;
+    const anonKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !anonKey) {
       throw new Error(
-        'SUPABASE_URL and SUPABASE_ANON_KEY must be provided in environment variables',
+        'SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be provided in environment variables',
       );
     }
     this.anonClient = createClient(url, anonKey, {
@@ -109,7 +109,7 @@ export class AuthService implements OnModuleInit {
   async logout(accessToken: string): Promise<{ success: true }> {
     const scoped = createClient(
       process.env.SUPABASE_URL!,
-      process.env.SUPABASE_ANON_KEY!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
       {
         auth: { persistSession: false, autoRefreshToken: false },
         global: { headers: { Authorization: `Bearer ${accessToken}` } },

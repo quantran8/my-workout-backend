@@ -11,6 +11,7 @@ import { ProfileService } from '../profile/profile.service';
 import { validateProgram, Violation } from './program-validator';
 import { buildSlots, slimPool } from './pool-retrieval';
 import { assembleProgram, scheduleFromProfile } from './program.helpers';
+import { computeNutrition } from './nutrition';
 import type { Program } from './program.types';
 import type { Profile } from '../profile/profile.types';
 import type { Exercise } from '../profile/guardrail';
@@ -56,8 +57,10 @@ export class ProgramService {
     );
     const poolForLlm = selected.length ? selected : guard.allowedPool;
     const slim = slimPool(poolForLlm);
-    // LLM chọn bài theo slug -> cần map ngược sang uuid v7 trước khi ghi DB.
+    // LLM chọn bài theo slug -> cần map ngược sang uuid v7 trước khi ghi DB, và sang tên
+    // hiển thị để đính vào response (client render, không lưu ở Prescription).
     const idBySlug = new Map(poolForLlm.map((e) => [e.slug, e.exerciseId]));
+    const nameBySlug = new Map(poolForLlm.map((e) => [e.slug, e.name]));
 
     let lastViolations: Violation[] = [];
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -72,13 +75,16 @@ export class ProgramService {
         userId,
         basedOnProfileVersion,
         idBySlug,
+        nameBySlug,
       });
       const { ok, violations } = validateProgram(program, guard, {
         expectedDaysPerWeek: schedule.daysPerWeek,
       });
       if (ok) {
         await this.persist(program);
-        return program;
+        // Dinh dưỡng dẫn xuất từ profile (không lưu DB) — đính vào response để client
+        // hiển thị mà không tự tính (API-3 phía mobile).
+        return { ...program, nutrition: computeNutrition(profile) };
       }
       lastViolations = violations;
     }
@@ -89,9 +95,16 @@ export class ProgramService {
     });
   }
 
-  /** GET /program/active — program + revision hiện hành. */
-  async getActive(userId: string) {
-    const program = await this.prisma.program.findFirst({
+  /**
+   * GET /program/active — program + revision hiện hành, shape thành cùng contract
+   * `Program` mà /program/generate trả (client map một kiểu duy nhất).
+   *
+   * Prescription chỉ có exerciseId (FK mềm, KHÔNG có relation trong schema), nên tên bài
+   * được lấy bằng một query phụ và ghép vào — client cần tên để hiển thị, không map được
+   * từ uuid. Dinh dưỡng tính lại từ profile như ở generate.
+   */
+  async getActive(userId: string): Promise<Program> {
+    const row = await this.prisma.program.findFirst({
       where: { userId, status: 'active' },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -114,8 +127,77 @@ export class ProgramService {
         },
       },
     });
-    if (!program) throw new NotFoundException('Chưa có chương trình active');
-    return program;
+    if (!row) throw new NotFoundException('Chưa có chương trình active');
+
+    const rev = row.revisions[0];
+    const sessions = rev?.sessions ?? [];
+
+    // Một query cho mọi exercise trong revision -> tên hiển thị. Slug giữ lại cho client
+    // (đối chiếu/telemetry), name là thứ render trên màn plan.
+    const exerciseIds = [
+      ...new Set(
+        sessions.flatMap((s) => s.prescriptions.map((p) => p.exerciseId)),
+      ),
+    ];
+    const exercises = await this.prisma.exercise.findMany({
+      where: { id: { in: exerciseIds } },
+      select: { id: true, slug: true, name: true },
+    });
+    const byId = new Map(exercises.map((e) => [e.id, e]));
+
+    const { profile } = await this.profileService.getProfile(userId);
+
+    return {
+      programId: row.id,
+      userId: row.userId,
+      basedOnProfileVersion: row.basedOnProfileVersion,
+      type: row.type,
+      currentRevision: row.currentRevision,
+      goalSummary: row.goalSummary,
+      phasePlan: (row.phasePlan as Program['phasePlan']) ?? null,
+      nutrition: computeNutrition(profile),
+      status: row.status,
+      revision: {
+        revisionId: rev?.id ?? '',
+        programId: row.id,
+        revisionNumber: rev?.revisionNumber ?? 1,
+        createdAt: (rev?.createdAt ?? row.createdAt).toISOString(),
+        adjustmentReason: rev?.adjustmentReason ?? null,
+        sessions: sessions.map((s) => ({
+          plannedSessionId: s.id,
+          weekNumber: s.weekNumber,
+          dayNumber: s.dayNumber,
+          focus: s.focus,
+          prescriptions: s.prescriptions.map((p) => ({
+            prescriptionId: p.id,
+            exerciseId: p.exerciseId,
+            exerciseSlug: byId.get(p.exerciseId)?.slug ?? '',
+            exerciseName: byId.get(p.exerciseId)?.name ?? '',
+            order: p.order,
+            targetSets: p.targetSets,
+            targetReps: (p.targetReps as number | [number, number] | null) ?? null,
+            targetWeightKg: p.targetWeightKg ?? null,
+            targetDurationSec: p.targetDurationSec ?? null,
+            targetDistanceM: p.targetDistanceM ?? null,
+            targetPaceSecPerKm: p.targetPaceSecPerKm ?? null,
+            targetRpe: p.targetRpe ?? null,
+            restSec: p.restSec,
+            blocks: p.blocks.length
+              ? p.blocks.map((b) => ({
+                  order: b.order,
+                  phase: b.phase,
+                  durationSec: b.durationSec ?? null,
+                  distanceM: b.distanceM ?? null,
+                  targetRpeMin: b.targetRpeMin ?? null,
+                  targetRpeMax: b.targetRpeMax ?? null,
+                  targetPaceSecPerKm: b.targetPaceSecPerKm ?? null,
+                  instruction: b.instruction,
+                }))
+              : null,
+          })),
+        })),
+      },
+    };
   }
 
   /**

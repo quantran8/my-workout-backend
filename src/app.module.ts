@@ -14,6 +14,7 @@ import { ProfileModule } from './profile/profile.module';
 import { ExerciseModule } from './exercise/exercise.module';
 import { ProgramModule } from './program/program.module';
 import { SessionModule } from './session/session.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
 
 @Global()
@@ -28,6 +29,7 @@ import { HttpLoggingInterceptor } from './common/interceptors/http-logging.inter
     ExerciseModule,
     ProgramModule,
     SessionModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [

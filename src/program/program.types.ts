@@ -1,6 +1,9 @@
 // program/program.types.ts
 // Khớp data model §3. Static plan (free) = 1 revision đóng băng; living (paid) = nhiều revision.
 
+import type { NutritionTarget } from './nutrition';
+export type { NutritionTarget };
+
 export type ProgramType = 'static' | 'living';
 export type ProgramStatus = 'active' | 'archived';
 
@@ -29,6 +32,7 @@ export interface Prescription {
   prescriptionId: string;
   exerciseId: string; // uuid v7 của Exercise — khoá ghi DB ('' nếu slug không map được)
   exerciseSlug: string; // slug LLM trả về; PHẢI ∈ allowedPool (validator kiểm)
+  exerciseName: string; // tên hiển thị, ghép từ pool/DB — client render (không lưu ở Prescription)
   order: number;
   targetSets: number;
   targetReps?: number | [number, number] | null;   // resistance
@@ -78,6 +82,9 @@ export interface Program {
   currentRevision: number;   // static luôn = 1
   goalSummary: string;       // LLM diễn giải "chương trình này nhắm gì & vì sao"
   phasePlan?: Phase[] | null;
+  // Mục tiêu calo/đạm do CODE tính (nutrition.ts), KHÔNG do LLM. null khi thiếu số liệu
+  // cơ thể. Không lưu DB (dẫn xuất từ profile) — chỉ đính vào response cho client hiển thị.
+  nutrition?: NutritionTarget | null;
   status: ProgramStatus;
   revision: ProgramRevision; // revision hiện hành
 }

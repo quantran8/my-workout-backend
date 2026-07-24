@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import OpenAI from 'openai';
 import { LlmConfig } from './llm.config';
 import { PROFILE_DRAFT_SCHEMA } from './schemas/profile-draft.schema';
@@ -96,21 +100,31 @@ export class LlmService {
           ? args.user
           : `${args.user}\n\nBản trước không parse được JSON hợp lệ: ${lastErr}. Xuất lại JSON đúng schema.`;
 
-      const res = await this.client.chat.completions.create({
-        model: args.model,
-        messages: [
-          { role: 'system', content: args.system },
-          { role: 'user', content: userContent },
-        ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
-            name: args.schemaName,
-            strict: true,
-            schema: args.schema,
+      let res: OpenAI.Chat.Completions.ChatCompletion;
+      try {
+        res = await this.client.chat.completions.create({
+          model: args.model,
+          messages: [
+            { role: 'system', content: args.system },
+            { role: 'user', content: userContent },
+          ],
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: args.schemaName,
+              strict: true,
+              schema: args.schema,
+            },
           },
-        },
-      });
+        });
+      } catch (e) {
+        // Upstream (auth, rate limit, bad model, network) — NOT a parse retry.
+        // Surface a clean 503 with the real reason instead of leaking the raw
+        // OpenAI error, which Nest would otherwise emit as an opaque status.
+        throw new ServiceUnavailableException(
+          `LLM provider lỗi: ${e instanceof OpenAI.APIError ? `${e.status ?? '?'} ${e.message}` : e instanceof Error ? e.message : String(e)}`,
+        );
+      }
 
       const text = res.choices[0]?.message?.content ?? '';
       try {

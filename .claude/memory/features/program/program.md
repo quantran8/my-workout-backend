@@ -5,7 +5,7 @@
 | **unit** | `src/program` |
 | **kind** | `feature` |
 | **status** | `live` |
-| **last_updated** | `2026-07-23` |
+| **last_updated** | `2026-07-24` |
 
 **Source paths**
 
@@ -13,6 +13,7 @@
 - [`program-validator.ts`](../../../../src/program/program-validator.ts) — **trust but verify** over the LLM
 - [`program.helpers.ts`](../../../../src/program/program.helpers.ts) — draft → Program assembly
 - [`pool-retrieval.ts`](../../../../src/program/pool-retrieval.ts) — the slim pool sent to the LLM
+- [`nutrition.ts`](../../../../src/program/nutrition.ts) — deterministic calorie/protein target (not the LLM)
 - [`program.types.ts`](../../../../src/program/program.types.ts) — Prescription + interval blocks
 
 ---
@@ -100,6 +101,21 @@ generate
 - **Why** — cost, and those fields are display-only — the model does not need them to choose a movement.
 - **Code** — [`pool-retrieval.ts`](../../../../src/program/pool-retrieval.ts)
 
+### `PROGRAM-10` — nutrition is code, derived, and not persisted
+
+- **Trigger** — either program endpoint (`generate`, `active`) shaping its response.
+- **Effect** — `computeNutrition(profile)` returns a `{calorieLow, calorieHigh, proteinLow, proteinHigh, intent}` target (Mifflin–St Jeor, `ACTIVITY_FACTOR` 1.45, +350 kcal surplus when BMI < 18.5), attached to `Program.nutrition`. It is **never** stored — it is re-derived from the profile each response.
+- **Edge cases** — incomplete body data (missing sex/age/height/weight) returns `null`; the client hides the nutrition card rather than showing invented numbers.
+- **Why** — the LLM must not produce calorie targets (core invariant), and the client must not either (mobile `API-3`). One deterministic source. `NUTRITION_RULE_VERSION` records the formula version.
+- **Code** — [`nutrition.ts`](../../../../src/program/nutrition.ts); attached in [`program.service.ts`](../../../../src/program/program.service.ts) — `generateStaticProgram`, `getActive`
+
+### `PROGRAM-11` — the program response carries exercise display names
+
+- **Trigger** — both program endpoints returning prescriptions.
+- **Effect** — each prescription includes `exerciseName` (and `exerciseSlug`) alongside `exerciseId`, so the client can render a movement without knowing the exercise catalogue.
+- **Edge cases** — `Prescription` has **no** Prisma relation to `Exercise` (soft FK), so `getActive` resolves names with a **separate** `exercise.findMany` keyed by the revision's `exerciseId`s and stitches them in. `generate` fills `exerciseName` from the pool's `nameBySlug` map. A missing name falls back to the slug/id rather than an empty string breaking the UI.
+- **Code** — [`program.service.ts`](../../../../src/program/program.service.ts) — `getActive`; [`program.helpers.ts:34`](../../../../src/program/program.helpers.ts#L34) — `assembleProgram`
+
 ---
 
 ## 4. State held
@@ -124,12 +140,16 @@ generate
 ## 6. Known gotchas
 
 - `PROGRAM_DRAFT_SCHEMA` runs in OpenAI **strict mode**: every property must appear in `required`. A field that does not apply is returned as `null`, never omitted — this is why `blocks` and `targetPaceSecPerKm` are nullable rather than optional.
-- `PrescriptionBlock` and `targetPaceSecPerKm` existed in `schema.prisma` for some time with **no migration and no TypeScript referencing them** — schema drift that was invisible until `prisma validate` was run. Check both when adding a model.
+- Schema drift has bitten this DB more than once. `Exercise.cues` was renamed to `instructions` and `contentMode`/`environments` were added in `schema.prisma` with **no migration**, so the live DB kept the old shape while the Prisma client selected columns that did not exist — `buildGuardrail`'s `exercise.findMany` failed with `column … does not exist`, which Prisma raises as a `PrismaClientKnownRequestError` and Nest emits as an **opaque 400** on `POST /program/generate`. Fixed by migrations `20260724000000_rename_cues_to_instructions` and `20260724000001_add_exercise_content_mode_environments`. If a "400 with no body" appears on any exercise-touching route, run `npx prisma migrate status` / `prisma validate` first — it is almost always a missing column, not a bad request.
 - `reviseForSafety` copies prescriptions into a new revision; it does **not** yet copy their blocks. A safety revision of an interval session would lose the intervals.
 - The validator keys the pool by **slug**, not uuid — that is what the LLM returns.
+- An **upstream LLM failure** (bad `OPENAI_API_KEY`, rate limit, wrong model) is caught in `callStructured` and re-thrown as a `ServiceUnavailableException` (503) carrying the provider's real message. Before this it leaked the raw OpenAI error, which reached the client as an opaque 400 with no body. A 503 with `LLM provider lỗi: …` therefore means the key/model/quota, not the user's profile.
 
 ---
 
 ## 7. Change log
 
 - `2026-07-23` — Claude — initial version: generate/validate/persist flow, pool constraint, volume + goal-conflict caps, interval blocks.
+- `2026-07-24` — Claude — `PROGRAM-10` (server-computed nutrition, not persisted) and `PROGRAM-11` (prescriptions carry `exerciseName`/`exerciseSlug`); both endpoints now return the same enriched `Program` contract consumed by the mobile plan screen.
+- `2026-07-24` — Claude — upstream LLM errors now surface as 503 with the provider's message instead of leaking as an opaque 400 (see gotchas).
+- `2026-07-24` — Claude — fixed Exercise schema drift (migrations rename `cues`→`instructions`, add `contentMode`/`environments`) that was breaking `buildGuardrail` and thus every `POST /program/generate` with an opaque 400. Also applied the previously-pending `prescription_blocks` migration.
